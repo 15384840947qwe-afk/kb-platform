@@ -1,0 +1,15 @@
+# 依赖与构建产物
+node_modules
+dist
+
+# IDE
+.idea
+.vscode
+*.iml
+
+# 日志
+*.log
+npm-debug.log*
+
+# Docker构建缓存
+.docker

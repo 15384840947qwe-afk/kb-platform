@@ -1,0 +1,161 @@
+# KB知识库一键部署：docker compose up -d --build
+# 架构：浏览器 → kb-web(nginx:80) → kb-gateway(:9001) → kb-service(:8082)
+# 中间件：MySQL / Redis / Nacos / RabbitMQ / MinIO
+# 所有连接地址通过环境变量覆盖application.yml里的localhost配置，代码零改动
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: kb-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: "2314490042"
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_general_ci
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # 首次启动自动执行建库脚本（kb-schema.sql：10张表）
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h127.0.0.1 -uroot -p2314490042 --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks: [kb-net]
+
+  redis:
+    image: redis:7-alpine
+    container_name: kb-redis
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [kb-net]
+
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: kb-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    networks: [kb-net]
+
+  minio:
+    image: minio/minio
+    container_name: kb-minio
+    command: server /data --console-address ":9101"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: admin12345
+    volumes:
+      - minio-data:/data
+    ports:
+      # 宿主机9100/9101被本机开发用的MinIO占着，改映射到9200/9201；
+      # API口要暴露给浏览器（附件下载签名直链用），容器间通信不受影响
+      - "9200:9000"
+      - "9201:9101"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [kb-net]
+
+  nacos:
+    image: nacos/nacos-server:v2.3.2
+    container_name: kb-nacos
+    environment:
+      MODE: standalone
+      JVM_XMS: 256m
+      JVM_XMX: 256m
+      JVM_XMN: 128m
+    ports:
+      # 宿主机8848被本机开发用的Nacos占着，控制台口映射到8849；
+      # 容器间通信走compose内网不受影响
+      - "8849:8848"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8848/nacos/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+    networks: [kb-net]
+
+  kb-service:
+    build: ../kb-service
+    container_name: kb-service
+    environment:
+      # 数据源指向容器内MySQL
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/kb?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: "2314490042"
+      # Nacos：注册/配置都指向容器内nacos。
+      # discovery.ip钉成服务名kb-service（容器DNS可解析）——覆盖yml里的127.0.0.1，
+      # 否则网关按127.0.0.1转发会打到自己容器里
+      SPRING_CLOUD_NACOS_DISCOVERY_SERVER_ADDR: nacos:8848
+      SPRING_CLOUD_NACOS_DISCOVERY_IP: kb-service
+      SPRING_CLOUD_NACOS_CONFIG_SERVER_ADDR: nacos:8848
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_RABBITMQ_HOST: rabbitmq
+      # MinIO：后端内网走容器名，签给浏览器的下载链接走宿主机9200口
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_PUBLIC_ENDPOINT: http://localhost:9200
+      # AI大模型密钥：从同目录.env文件读取（.env已gitignore，不上传代码库）
+      AI_API_KEY: ${AI_API_KEY:-}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      nacos:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8082/kb/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    networks: [kb-net]
+
+  kb-gateway:
+    build: ../kb-gateway
+    container_name: kb-gateway
+    environment:
+      SPRING_CLOUD_NACOS_DISCOVERY_SERVER_ADDR: nacos:8848
+      SPRING_CLOUD_NACOS_DISCOVERY_IP: kb-gateway
+    depends_on:
+      nacos:
+        condition: service_healthy
+      kb-service:
+        condition: service_healthy
+    networks: [kb-net]
+
+  kb-web:
+    build: ../kb-web
+    container_name: kb-web
+    ports:
+      # 宿主机80口被占，站点映射到8090
+      - "8090:80"
+    depends_on:
+      - kb-gateway
+    networks: [kb-net]
+
+volumes:
+  mysql-data:
+  redis-data:
+  minio-data:
+
+networks:
+  kb-net:
+    driver: bridge

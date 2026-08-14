@@ -1,0 +1,85 @@
+server:
+  port: 8082
+  servlet:
+    # 所有接口统一带/kb前缀：网关按Path=/kb/**转发时路径原样透传，
+    # 和你网关不写StripPrefix的现有风格保持一致
+    context-path: /kb
+
+spring:
+  application:
+    name: kb-service
+  config:
+    import:
+      - optional:nacos:common.yaml
+  datasource:
+    url: jdbc:mysql://localhost:3306/kb?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai
+    username: root
+    password: 2314490042
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+        # 本机有VMware/WSL等多张虚拟网卡，自动选IP可能挑到不可达的虚拟网卡地址，
+        # 导致网关按注册IP转发时挂起超时。单机部署直接钉死127.0.0.1：
+        # 网关和服务同机，转发走回环地址必通，且换任何网络都不用改配置
+        ip: 127.0.0.1
+      config:
+        server-addr: localhost:8848
+  data:
+    redis:
+      host: localhost
+      port: 6379
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+  servlet:
+    multipart:
+      # 文件上传大小上限：单文件50MB，单次请求总量60MB，阶段5用
+      max-file-size: 50MB
+      max-request-size: 60MB
+
+mybatis-plus:
+  configuration:
+    # 控制台打印SQL，学习阶段看执行语句方便
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      id-type: auto
+
+# MinIO连接信息：端口9100就是阶段0映射出来的API口。
+# 先放本地yml跑通，后面阶段再迁进Nacos配置中心（正好练配置热更新）
+minio:
+  endpoint: http://localhost:9100
+  # 签给浏览器的下载链接host跟这个地址走：用局域网IP或宿主机地址，
+  # 别人的设备才能直连MinIO；上面endpoint是后端内部上传专用
+  public-endpoint: ${MINIO_PUBLIC_ENDPOINT:http://localhost:9100}
+  access-key: admin
+  secret-key: admin12345
+  bucket: kb-files
+# JWT参数：secret必须≥32字符（HS256要求256位），token有效期24小时
+# 生产环境用环境变量JWT_SECRET覆盖默认值
+jwt:
+  secret: ${JWT_SECRET:kb-service-jwt-secret-2026-must-be-long-enough}
+  expire-hours: 24
+
+# 刷题简答AI批改（可选插件）：base-url留空=自评模式，零依赖。
+# 走OpenAI兼容协议：云端填如 https://api.deepseek.com/v1 ，
+# 本机Ollama填 http://localhost:11434/v1 ，同一套代码通吃
+# api-key走环境变量AI_API_KEY注入（Docker见kb-deploy/.env，本地跑设同名环境变量），不入代码库
+drill:
+  ai:
+    base-url: https://api.siliconflow.cn/v1
+    api-key: ${AI_API_KEY:}
+    model: deepseek-ai/DeepSeek-V4-Pro
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: prometheus,health,info
+  metrics:
+    tags:
+      application: ${spring.application.name}

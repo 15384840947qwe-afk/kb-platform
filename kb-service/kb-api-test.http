@@ -1,0 +1,286 @@
+### 注册tester（第一次200；重复跑返回400用户名已存在，也是验证点）
+POST http://localhost:9001/kb/auth/register
+Content-Type: application/json
+
+{"username": "tester", "password": "123456", "nickname": "测试员"}
+
+### admin登录：登录成功后自动把token存进变量adminToken
+POST http://localhost:9001/kb/auth/login
+Content-Type: application/json
+
+{"username": "admin", "password": "admin123"}
+
+> {%
+    client.global.set("adminToken", response.body.data.token);
+%}
+
+### tester登录：token存进变量testerToken
+POST http://localhost:9001/kb/auth/login
+Content-Type: application/json
+
+{"username": "tester", "password": "123456"}
+
+> {%
+    client.global.set("testerToken", response.body.data.token);
+%}
+
+### 错误密码（应返回400 用户名或密码错误）
+POST http://localhost:9001/kb/auth/login
+Content-Type: application/json
+
+{"username": "admin", "password": "wrong"}
+
+### 不带token访问（应401）
+GET http://localhost:9001/kb/user/me
+
+### 带token查自己（应200，注意返回里没有password字段）
+GET http://localhost:9001/kb/user/me
+Authorization: Bearer {{adminToken}}
+
+### 管理员接口：admin的token应200
+GET http://localhost:9001/kb/user/admin-ping
+Authorization: Bearer {{adminToken}}
+
+### 管理员接口：tester的token应403
+GET http://localhost:9001/kb/user/admin-ping
+Authorization: Bearer {{testerToken}}
+### 创建知识库（admin）
+POST http://localhost:9001/kb/base
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{"name": "Java面试题库", "description": "面试突击核心知识点"}
+
+### 创建知识库（tester，MEMBER也能建）
+POST http://localhost:9001/kb/base
+Authorization: Bearer {{testerToken}}
+Content-Type: application/json
+
+{"name": "tester的笔记"}
+
+### 列表（应看到2条）
+GET http://localhost:9001/kb/base/list
+Authorization: Bearer {{adminToken}}
+
+### tester删自己的知识库（把2换成tester那条的实际id，应成功）
+DELETE http://localhost:9001/kb/base/2
+Authorization: Bearer {{testerToken}}
+
+### tester删admin的知识库（应403）
+DELETE http://localhost:9001/kb/base/1
+Authorization: Bearer {{testerToken}}
+### 建根文件夹"Java基础"
+POST http://localhost:9001/kb/catalog
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{"kbId": 1, "parentId": 0, "title": "Java基础"}
+
+### 建根文件夹"MySQL"
+POST http://localhost:9001/kb/catalog
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{"kbId": 1, "parentId": 0, "title": "MySQL"}
+
+### 在节点1下建子文件夹（parentId=1）
+POST http://localhost:9001/kb/catalog
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{"kbId": 1, "parentId": 1, "title": "集合"}
+
+### 看整棵树（应2个根，第一个根下挂1个子节点）
+GET http://localhost:9001/kb/catalog/tree/1
+Authorization: Bearer {{adminToken}}
+
+### 改名节点3
+PUT http://localhost:9001/kb/catalog/3/rename
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{"title": "Java集合"}
+
+### 把节点3移到节点2下
+PUT http://localhost:9001/kb/catalog/move
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{"id": 3, "parentId": 2}
+
+### 成环测试：把节点1移到它自己的子节点3下（应400 不能移入自己的子树）
+PUT http://localhost:9001/kb/catalog/move
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{"id": 1, "parentId": 3}
+
+### 删空文件夹3（应成功）
+DELETE http://localhost:9001/kb/catalog/3
+Authorization: Bearer {{adminToken}}
+
+### 删还有子节点的文件夹1（应400 请先删除）——如果3已删光，先再建一个子节点再试
+DELETE http://localhost:9001/kb/catalog/1
+Authorization: Bearer {{adminToken}}
+### 真·成环测试：2是1的祖先，把2塞进1下面（应400）
+PUT http://localhost:9001/kb/catalog/move
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{"id": 2, "parentId": 1}
+### 创建文档（parentId换成一个文件夹的id）
+POST http://localhost:9001/kb/doc
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{"kbId": 1, "parentId": 1, "title": "HashMap底层原理"}
+
+### 查详情（应看到content={"blocks":[]}、version=0）
+GET http://localhost:9001/kb/doc/1
+Authorization: Bearer {{adminToken}}
+
+### 保存内容（version带0）
+PUT http://localhost:9001/kb/doc/1
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{"title": "HashMap底层原理", "content": "{\"blocks\":[{\"type\":\"paragraph\",\"data\":{\"text\":\"数组+链表+红黑树\"}}]}", "version": 0}
+
+### 用旧version再存一次（应400 文档已被他人修改）
+PUT http://localhost:9001/kb/doc/1
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{"content": "{\"blocks\":[]}", "version": 0}
+
+### 看树（应出现nodeType=DOC的节点）
+GET http://localhost:9001/kb/catalog/tree/1
+Authorization: Bearer {{adminToken}}
+
+### 删文档（目录节点应一起消失）
+DELETE http://localhost:9001/kb/doc/1
+Authorization: Bearer {{adminToken}}
+### 上传文件
+POST http://localhost:9001/kb/file/upload?kbId=1
+Authorization: Bearer {{adminToken}}
+Content-Type: multipart/form-data; boundary=kb-boundary
+
+--kb-boundary
+Content-Disposition: form-data; name="file"; filename="notes.txt"
+Content-Type: text/plain
+
+你好，这是测试文件内容
+--kb-boundary--
+
+### 文件列表
+GET http://localhost:9001/kb/file/list?kbId=1
+Authorization: Bearer {{adminToken}}
+
+### 取预签名URL（id用上传返回的）
+GET http://localhost:9001/kb/file/1/url
+Authorization: Bearer {{adminToken}}
+
+### 删文件
+DELETE http://localhost:9001/kb/file/1
+Authorization: Bearer {{adminToken}}
+
+### ===== 流式端点（SSE）：返回event: delta/done/fallback，观察增量输出 =====
+
+### 面试流式判分：带history验证追问不重复；AI不可用时应收到fallback事件
+POST http://localhost:9001/kb/interview/evaluate-stream
+Authorization: Bearer {{testerToken}}
+Content-Type: application/json
+Accept: text/event-stream
+
+{"questionId": 1, "answer": "HashMap底层是数组加链表，冲突多了链表转红黑树", "followUsed": 0, "maxFollow": 1, "history": [{"role": "interviewer", "text": "说说HashMap的底层原理"}, {"role": "user", "text": "HashMap底层是数组加链表，冲突多了链表转红黑树"}]}
+
+### 面试流式总评：delta流summary，done带完整报告并落库
+POST http://localhost:9001/kb/interview/report-stream
+Authorization: Bearer {{testerToken}}
+Content-Type: application/json
+Accept: text/event-stream
+
+{"category": "Java基础", "transcript": "[]", "items": [{"questionId": 1, "stem": "说说HashMap的底层原理", "pass": true, "comment": "答出了核心结构"}]}
+
+### 刷题流式批改（仅简答题，objective题应400）
+POST http://localhost:9001/kb/drill/check-stream
+Authorization: Bearer {{testerToken}}
+Content-Type: application/json
+Accept: text/event-stream
+
+{"questionId": 1, "answer": "数组加链表，扩容时重新散列"}
+
+### 成长看板：perCategory/recent7/scores三段
+GET http://localhost:9001/kb/drill/dashboard
+Authorization: Bearer {{testerToken}}
+
+### 文档问答（SSE）：只依据文档内容回答；AI不可用时done里是固定提示
+POST http://localhost:9001/kb/doc/1/ask
+Authorization: Bearer {{testerToken}}
+Content-Type: application/json
+Accept: text/event-stream
+
+{"question": "HashMap冲突多了怎么办？", "history": []}
+
+### ===== 简历助手 =====
+
+### 新建空简历
+POST http://localhost:9001/kb/resume
+Authorization: Bearer {{testerToken}}
+Content-Type: application/json
+
+{"title": "测试简历", "targetJob": "Java后端开发"}
+
+### 导入简历（pdf/txt/md，AI提取结构化；AI不可用时aiParsed=false）
+POST http://localhost:9001/kb/resume/import
+Authorization: Bearer {{testerToken}}
+Content-Type: multipart/form-data; boundary=kb-boundary
+
+--kb-boundary
+Content-Disposition: form-data; name="file"; filename="resume.txt"
+Content-Type: text/plain
+
+张三 13800000000 zhangsan@example.com
+教育经历：某某大学 本科 计算机 2019-2023
+工作经历：某公司 后端开发 2023-至今，负责订单模块，QPS提升30%
+--kb-boundary--
+
+### 简历列表（不带正文大字段）
+GET http://localhost:9001/kb/resume/list
+Authorization: Bearer {{testerToken}}
+
+### 简历详情
+GET http://localhost:9001/kb/resume/1
+Authorization: Bearer {{testerToken}}
+
+### 保存更新
+PUT http://localhost:9001/kb/resume/1
+Authorization: Bearer {{testerToken}}
+Content-Type: application/json
+
+{"title": "测试简历", "targetJob": "Java后端开发", "contentJson": "{\"basics\":{\"name\":\"张三\",\"phone\":\"13800000000\",\"email\":\"zhangsan@example.com\",\"city\":\"\",\"github\":\"\",\"blog\":\"\"},\"work\":[],\"projects\":[],\"education\":[],\"skills\":[],\"awards\":[]}"}
+
+### 站内素材：刷题科目分布+面试记录
+GET http://localhost:9001/kb/resume/materials
+Authorization: Bearer {{testerToken}}
+
+### 流式分析（SSE）：delta点评增量→done结构化评审；AI不可用fallback带本地规则清单
+POST http://localhost:9001/kb/resume/1/analyze-stream
+Authorization: Bearer {{testerToken}}
+Accept: text/event-stream
+
+### 流式生成/补全（SSE）：delta是Markdown增量→done带{id,markdown,contentJson}
+POST http://localhost:9001/kb/resume/generate-stream
+Authorization: Bearer {{testerToken}}
+Content-Type: application/json
+Accept: text/event-stream
+
+{"id": 1, "targetJob": "Java后端开发", "useDrill": true, "useInterview": false, "note": "突出项目深度"}
+
+### 导出Markdown纯文本（非Result包装）
+GET http://localhost:9001/kb/resume/1/export.md
+Authorization: Bearer {{testerToken}}
+
+### 删简历
+DELETE http://localhost:9001/kb/resume/1
+Authorization: Bearer {{testerToken}}
