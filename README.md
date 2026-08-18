@@ -89,18 +89,29 @@ copy .env.example .env       # 然后编辑 .env，填入自己的 AI_API_KEY
 
 ## 💻 本地开发（可选）
 
+> 完整指南见 [LOCAL-DEV.md](LOCAL-DEV.md)：中间件两种准备方式（Docker 只跑中间件 / 全本机安装）、
+> 服务启动顺序、改代码后如何生效、常见问题。
+
 ```powershell
-# 后端（需本机 MySQL/Redis/RabbitMQ/MinIO/Nacos，见 kb-service/application.yml）
+# 中间件推荐用 Docker 起（端口已还原成本地开发期望值，含自动建库）
+cd kb-deploy
+docker compose -f docker-compose.yml -f compose-dev.yml up -d mysql redis rabbitmq minio nacos
+
+# 后端（另开窗口；IDEA 里跑 KbServiceApplication 也行）
 cd kb-service
 .\mvnw.cmd spring-boot:run
 
-# 前端
+# 网关（另开窗口，前端 dev 代理指到 9001）
+cd kb-gateway
+.\mvnw.cmd spring-boot:run
+
+# 前端（保存即热更新）
 cd kb-web
 npm install
 npm run dev        # http://localhost:5173
 ```
 
-本地跑想启用 AI 功能：设置环境变量 `AI_API_KEY=你的key`（IDEA 运行配置的 Environment variables 里加即可）。
+本地跑想启用 AI 功能：启动后端前设置环境变量 `AI_API_KEY=你的key`（当前窗口 `$env:AI_API_KEY="sk-..."`，永久生效用 setx；IDEA 运行配置的 Environment variables 里加也可）。
 
 ## 📁 项目结构
 
@@ -111,6 +122,7 @@ kb-platform/
 ├── kb-web/         # Vue3 前端（多阶段 Docker 构建，Nginx 托管）
 └── kb-deploy/      # 部署目录
     ├── docker-compose.yml      # 8 容器编排
+    ├── compose-dev.yml         # 本地开发端口覆盖（只起中间件时用）
     ├── start.ps1               # 一键部署（-Rebuild 强制重打包）
     ├── seed.ps1                # 演示数据灌入（幂等）
     ├── mysql/init/             # 建表 + 种子数据（首次启动自动执行）
