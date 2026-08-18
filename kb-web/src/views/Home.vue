@@ -34,6 +34,14 @@
           <svg viewBox="0 0 16 16"><path d="M2.5 3A1.5 1.5 0 0 1 4 1.5h8A1.5 1.5 0 0 1 13.5 3v10a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 13zm1.5.2v9.6c0 .15.12.27.27.27H12V3H4.27a.27.27 0 0 0-.27.27zM5.5 5.5h5M5.5 8h5M5.5 10.5h3" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity=".85"/></svg>
           <span class="nav-txt">题库</span>
         </a>
+<a v-if="isAdmin" class="nav-item manage-entry" @click="router.push('/jobs')">
+          <svg viewBox="0 0 16 16"><path d="M5 4.5V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1.5M2.5 6A1.5 1.5 0 0 1 4 4.5h8A1.5 1.5 0 0 1 13.5 6v6A1.5 1.5 0 0 1 12 13.5H4A1.5 1.5 0 0 1 2.5 12zM2.5 8.5h11" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity=".85"/></svg>
+          <span class="nav-txt">岗位</span>
+        </a>
+        <a v-if="isAdmin" class="nav-item manage-entry" @click="router.push('/resumes')">
+          <svg viewBox="0 0 16 16"><path d="M4 1.5h5.6a1 1 0 0 1 .7.3l2.4 2.4a1 1 0 0 1 .3.7v9.6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-12a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="6" r="1.6" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M5.4 11c.3-1.2 1.3-1.8 2.6-1.8s2.3.6 2.6 1.8" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+          <span class="nav-txt">简历审阅</span>
+        </a>
       </nav>
 
       <div class="nav-right">
@@ -105,6 +113,7 @@
           <a @click="createFolder">+ 文件夹</a>
           <a class="primary" @click="createDoc">+ 新文档</a>
           <a v-if="isAdmin" class="danger" @click="deleteNode">删节点</a>
+          <a v-if="isAdmin" @click="reindex">重建索引</a>
         </div>
 
         <el-tree
@@ -444,6 +453,21 @@ function onNodeClick(data) {
   if (data.nodeType === 'DOC' && window.innerWidth <= 768) {
     sideOpen.value = false
   }
+}
+
+/** 一键重建全部已审核文档的向量索引：后台异步跑，教材问答/出题检索会更准 */
+async function reindex() {
+  try {
+    await ElMessageBox.confirm(
+      '重建全部已审核文档的向量索引？后台异步执行，完成后AI问答和出题检索会更准确。',
+      '重建索引',
+      { type: 'info' }
+    )
+  } catch {
+    return
+  }
+  const msg = await http.post('/doc/reindex')
+  ElMessage.success(msg || '已开始重建')
 }
 
 async function createKb() {

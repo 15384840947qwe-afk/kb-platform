@@ -21,22 +21,18 @@ import com.lyq.kb.mapper.FileMapper;
 import com.lyq.kb.mapper.KnowledgeBaseMapper;
 import com.lyq.kb.service.DocService;
 import com.lyq.kb.service.HistoryService;
+import com.lyq.kb.service.RagService;
 import io.minio.MinioClient;
 import io.minio.RemoveObjectArgs;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.function.Consumer;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -53,6 +49,7 @@ public class DocServiceImpl implements DocService {
     private final FileMapper fileMapper;
     private final MinioClient minioClient;
     private final AiGrader aiGrader;
+    private final RagService ragService;
 
     @Value("${minio.bucket}")
     private String bucket;
@@ -144,6 +141,13 @@ public class DocServiceImpl implements DocService {
                     new UpdateWrapper<Catalog>().eq("doc_id", id).set("title", newTitle));
             treeCache.evict(docMapper.selectById(id).getKbId());
         }
+        // 内容变了就重建向量索引：embedding要调外部接口，放事务提交后异步跑，不阻塞保存
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                new Thread(() -> ragService.rebuild(id), "rag-rebuild-" + id).start();
+            }
+        });
         return docMapper.selectById(id);
         // 备注：MyBatis-Plus自带@Version注解+乐观锁插件能自动干这件事，
         // 这里手写UpdateWrapper是为了让你看清它底层就是这条带version条件的UPDATE——
@@ -207,9 +211,7 @@ public class DocServiceImpl implements DocService {
                 .last("limit 20"));
     }
 
-    // ===== 文档问答（RAG，关键词检索版）：切块→词频打分取Top3→拼上下文交AI =====
-
-    private static final Pattern WORD = Pattern.compile("[A-Za-z0-9]+");
+    // ===== 文档问答（RAG，混合检索版）：向量+关键词打分取Top3块→拼上下文交AI =====
 
     @Override
     public void ask(Long id, DocAskRequest req, Consumer<String> onDelta, Consumer<String> onDone) {
@@ -221,7 +223,10 @@ public class DocServiceImpl implements DocService {
             onDone.accept(msg);
             return;
         }
-        String context = retrieve(chunk(text), req.getQuestion());
+        // 混合检索取Top3块（块表没建过会懒建）；拼成约1200字上下文控token
+        List<String> picked = ragService.retrieve(id, req.getQuestion(), 3);
+        String joined = String.join("\n", picked);
+        String context = joined.length() > 1200 ? joined.substring(0, 1200) : joined;
         StringBuilder user = new StringBuilder();
         // 多轮上下文：最多带最近2轮，控制token
         if (req.getHistory() != null && !req.getHistory().isEmpty()) {
@@ -256,65 +261,21 @@ public class DocServiceImpl implements DocService {
         onDone.accept(full.toString());
     }
 
-    /** 按段落切块并合并到约400字/块，避免碑句切散语义 */
-    private List<String> chunk(String text) {
-        List<String> out = new ArrayList<>();
-        StringBuilder cur = new StringBuilder();
-        for (String para : text.split("\n")) {
-            if (!cur.isEmpty() && cur.length() + para.length() > 400) {
-                out.add(cur.toString());
-                cur.setLength(0);
+    @Override
+    public String reindexAll() {
+        AuthUtil.requireAdmin();
+        // 只索引审核通过的文档：草稿/被驳回的半成品不进知识库
+        List<Doc> docs = docMapper.selectList(
+                new QueryWrapper<Doc>().select("id").eq("status", 1));
+        if (docs.isEmpty()) {
+            return "没有已审核通过的文档，无需重建";
+        }
+        // embedding一篇篇调外部接口，放后台线程跑，接口立刻返回不阻塞
+        new Thread(() -> {
+            for (Doc d : docs) {
+                ragService.rebuild(d.getId());
             }
-            cur.append(para).append('\n');
-        }
-        if (!cur.isEmpty()) {
-            out.add(cur.toString());
-        }
-        return out;
-    }
-
-    /** 问题分词：英文单词+中文二字滑窗 */
-    private Set<String> tokens(String question) {
-        Set<String> set = new LinkedHashSet<>();
-        Matcher m = WORD.matcher(question);
-        while (m.find()) {
-            set.add(m.group().toLowerCase());
-        }
-        String cjk = question.replaceAll("[^\u4e00-\u9fff]", "");
-        for (int i = 0; i + 2 <= cjk.length(); i++) {
-            set.add(cjk.substring(i, i + 2));
-        }
-        return set;
-    }
-
-    /** 词频加权打分取Top3块，拼成约1200字上下文；一个词都没命中就用头三块兑底 */
-    private String retrieve(List<String> chunks, String question) {
-        Set<String> toks = tokens(question);
-        List<String> picked;
-        if (toks.isEmpty()) {
-            picked = chunks.stream().limit(3).collect(Collectors.toList());
-        } else {
-            picked = chunks.stream()
-                    .map(c -> new Object[]{c, toks.stream().mapToInt(t -> countOccur(c, t)).sum()})
-                    .filter(a -> (Integer) a[1] > 0)
-                    .sorted(Comparator.comparingInt((Object[] a) -> (Integer) a[1]).reversed())
-                    .limit(3)
-                    .map(a -> (String) a[0])
-                    .collect(Collectors.toList());
-            if (picked.isEmpty()) {
-                picked = chunks.stream().limit(3).collect(Collectors.toList());
-            }
-        }
-        String ctx = String.join("\n", picked);
-        return ctx.length() > 1200 ? ctx.substring(0, 1200) : ctx;
-    }
-
-    private int countOccur(String hay, String needle) {
-        int n = 0, i = 0;
-        while ((i = hay.indexOf(needle, i)) >= 0) {
-            n++;
-            i += needle.length();
-        }
-        return n;
+        }, "rag-reindex").start();
+        return "已开始重建" + docs.size() + "篇文档的向量索引，后台进行中";
     }
 }

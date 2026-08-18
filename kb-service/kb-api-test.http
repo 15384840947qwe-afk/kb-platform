@@ -284,3 +284,76 @@ Authorization: Bearer {{testerToken}}
 ### 删简历
 DELETE http://localhost:9001/kb/resume/1
 Authorization: Bearer {{testerToken}}
+
+### ===== 岗位管理（管理员）=====
+
+### 岗位分页列表：status空=全部，keyword搜岗位名/公司名
+GET http://localhost:9001/kb/job/page?page=1&size=10
+Authorization: Bearer {{adminToken}}
+
+### 只看待审核（爬虫入库默认status=0）
+GET http://localhost:9001/kb/job/page?status=0&page=1&size=10
+Authorization: Bearer {{adminToken}}
+
+### 非管理员访问应403
+GET http://localhost:9001/kb/job/page
+Authorization: Bearer {{testerToken}}
+
+### 手动录入岗位：source固定MANUAL，status默认0待审核
+POST http://localhost:9001/kb/job
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "title": "Java开发工程师",
+  "company": "测试科技",
+  "city": "北京",
+  "salary": "15-25K·14薪",
+  "experience": "3-5年",
+  "education": "本科",
+  "skillsJson": "[\"Java\",\"Spring Boot\",\"MySQL\"]",
+  "jdText": "1.负责后端服务设计与开发；2.熟悉Spring Boot、MyBatis；3.熟悉MySQL索引与SQL调优；4.有微服务经验优先。"
+}
+
+> {%
+    client.global.set("jobId", response.body.data.id);
+%}
+
+### 岗位详情
+GET http://localhost:9001/kb/job/{{jobId}}
+Authorization: Bearer {{adminToken}}
+
+### AI解析JD：结构化需求落require_json（AI未配置应400 AI服务暂不可用）
+POST http://localhost:9001/kb/job/{{jobId}}/parse
+Authorization: Bearer {{adminToken}}
+
+### AI推荐面试题：未先解析应400 请先执行AI解析
+POST http://localhost:9001/kb/job/{{jobId}}/recommend
+Authorization: Bearer {{adminToken}}
+
+### 审核通过（上架 status=1）
+POST http://localhost:9001/kb/job/{{jobId}}/approve
+Authorization: Bearer {{adminToken}}
+
+### 驳回下架（status=2），可反复上下架
+POST http://localhost:9001/kb/job/{{jobId}}/reject
+Authorization: Bearer {{adminToken}}
+
+### 编辑岗位
+PUT http://localhost:9001/kb/job/{{jobId}}
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "title": "Java高级开发工程师",
+  "company": "测试科技",
+  "city": "北京",
+  "salary": "20-30K·14薪",
+  "experience": "5-10年",
+  "education": "本科",
+  "jdText": "负责核心系统设计，带小团队。"
+}
+
+### 删岗位
+DELETE http://localhost:9001/kb/job/{{jobId}}
+Authorization: Bearer {{adminToken}}

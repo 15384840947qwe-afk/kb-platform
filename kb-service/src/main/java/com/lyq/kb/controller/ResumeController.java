@@ -7,6 +7,7 @@ import com.lyq.kb.dto.ResumeGenerateRequest;
 import com.lyq.kb.dto.ResumeImportVO;
 import com.lyq.kb.dto.ResumeJdRequest;
 import com.lyq.kb.dto.ResumeSaveRequest;
+import com.lyq.kb.entity.Job;
 import com.lyq.kb.entity.Resume;
 import com.lyq.kb.service.ResumeService;
 import lombok.RequiredArgsConstructor;
@@ -95,6 +96,77 @@ public class ResumeController {
     @GetMapping(value = "/{id}/export.md", produces = "text/markdown;charset=UTF-8")
     public String exportMarkdown(@PathVariable Long id) {
         return resumeService.exportMarkdown(id);
+    }
+
+    // ===== 提交给管理员 / 管理员审阅 =====
+
+    /** 提交给管理员审阅，body可带意向岗位 {jobId} */
+    @PostMapping("/{id}/submit")
+    public Result<Void> submit(@PathVariable Long id, @RequestBody(required = false) Map<String, Long> body) {
+        resumeService.submit(id, body == null ? null : body.get("jobId"));
+        return Result.ok();
+    }
+
+    /** 撤回提交：仅待审阅状态可撤 */
+    @PostMapping("/{id}/withdraw")
+    public Result<Void> withdraw(@PathVariable Long id) {
+        resumeService.withdraw(id);
+        return Result.ok();
+    }
+
+    /** 管理员：简历分页，可按提交状态/学历/姓名目标岗位关键词筛 */
+    @GetMapping("/admin/page")
+    public Result<Map<String, Object>> adminPage(@RequestParam(required = false) Integer submitStatus,
+                                                 @RequestParam(required = false) String education,
+                                                 @RequestParam(required = false) String keyword,
+                                                 @RequestParam(defaultValue = "1") long page,
+                                                 @RequestParam(defaultValue = "10") long size) {
+        return Result.ok(resumeService.adminPage(submitStatus, education, keyword, page, size));
+    }
+
+    /** 管理员：统计总览（提交/推荐数、学历城市分布、AI均分） */
+    @GetMapping("/admin/stats")
+    public Result<Map<String, Object>> adminStats() {
+        return Result.ok(resumeService.adminStats());
+    }
+
+    /** 管理员：简历详情（含contentJson全文） */
+    @GetMapping("/admin/{id}")
+    public Result<Resume> adminDetail(@PathVariable Long id) {
+        return Result.ok(resumeService.adminDetail(id));
+    }
+
+    /** 管理员：推荐岗位 {jobId}，可多次追加 */
+    @PostMapping("/admin/{id}/assign")
+    public Result<Void> assign(@PathVariable Long id, @RequestBody Map<String, Long> body) {
+        resumeService.assign(id, body == null ? null : body.get("jobId"));
+        return Result.ok();
+    }
+
+    /** 管理员：撤销某个已推荐岗位 {jobId}，全部撤完回待审阅 */
+    @PostMapping("/admin/{id}/unassign")
+    public Result<Void> unassign(@PathVariable Long id, @RequestBody Map<String, Long> body) {
+        resumeService.unassign(id, body == null ? null : body.get("jobId"));
+        return Result.ok();
+    }
+
+    /** 管理员：某简历已推荐的岗位完整列表 */
+    @GetMapping("/admin/{id}/jobs")
+    public Result<List<Job>> adminRecommendedJobs(@PathVariable Long id) {
+        return Result.ok(resumeService.adminRecommendedJobs(id));
+    }
+
+    /** 用户：我的简历被推荐的岗位完整列表（仅本人） */
+    @GetMapping("/{id}/recommended")
+    public Result<List<Job>> recommendedJobs(@PathVariable Long id) {
+        return Result.ok(resumeService.recommendedJobs(id));
+    }
+
+    /** 管理员：退回并附理由 {remark} */
+    @PostMapping("/admin/{id}/return")
+    public Result<Void> sendBack(@PathVariable Long id, @RequestBody(required = false) Map<String, String> body) {
+        resumeService.sendBack(id, body == null ? null : body.get("remark"));
+        return Result.ok();
     }
 
     @GetMapping("/{id}")

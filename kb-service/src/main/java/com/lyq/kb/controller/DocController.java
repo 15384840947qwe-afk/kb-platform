@@ -63,4 +63,11 @@ public class DocController {
                 d -> Sse.send(emitter, "delta", d),
                 answer -> Sse.send(emitter, "done", java.util.Map.of("answer", answer))));
     }
+
+    /** 一键重建全部已审核文档的向量索引（存量回填），后台异步执行，仅管理员 */
+    @RateLimit(timeWindow = 60, maxCount = 1, message = "索引重建中，请勿重复触发")
+    @PostMapping("/reindex")
+    public Result<String> reindex() {
+        return Result.ok(docService.reindexAll());
+    }
 }

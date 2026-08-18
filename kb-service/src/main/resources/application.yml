@@ -74,6 +74,10 @@ drill:
     base-url: https://api.siliconflow.cn/v1
     api-key: ${AI_API_KEY:}
     model: deepseek-ai/DeepSeek-V4-Pro
+    # 备用模型：主模型超时/报错时自动切换（云端模型偶尔宕机，保底不断摆）
+    fallback-model: ${AI_FALLBACK_MODEL:deepseek-ai/DeepSeek-V3}
+    # RAG向量化用的embedding模型（硅基流动支持bge-m3）；留空或调用失败则检索自动降级为纯关键词
+    embedding-model: ${AI_EMBEDDING_MODEL:BAAI/bge-m3}
 
 management:
   endpoints:

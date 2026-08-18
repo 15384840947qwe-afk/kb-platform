@@ -1,5 +1,6 @@
 package com.lyq.kb.controller;
 
+import com.lyq.kb.common.RateLimit;
 import com.lyq.kb.common.Result;
 import com.lyq.kb.dto.QuestionRequest;
 import com.lyq.kb.entity.Question;
@@ -39,9 +40,11 @@ public class QuestionController {
         return Result.ok();
     }
 
-    /** AI从教材生成练习题：1单选+1填空+1简答，自动关联回该文档 */
+    /** AI从教材生成练习题：count可选3/6/9（默认3），自动关联回该文档，仅管理员 */
+    @RateLimit(timeWindow = 60, maxCount = 3, message = "出题中，请勿重复点击")
     @PostMapping("/generate")
-    public Result<List<Question>> generate(@RequestParam Long docId) {
-        return Result.ok(questionService.generateFromDoc(docId));
+    public Result<List<Question>> generate(@RequestParam Long docId,
+                                           @RequestParam(defaultValue = "3") int count) {
+        return Result.ok(questionService.generateFromDoc(docId, count));
     }
 }

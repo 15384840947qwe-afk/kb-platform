@@ -1,6 +1,8 @@
 package com.lyq.kb.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lyq.kb.common.AiGrader;
@@ -14,13 +16,19 @@ import com.lyq.kb.dto.ResumeImportVO;
 import com.lyq.kb.dto.ResumeJdRequest;
 import com.lyq.kb.dto.ResumeSaveRequest;
 import com.lyq.kb.entity.Interview;
+import com.lyq.kb.entity.Job;
 import com.lyq.kb.entity.Practice;
 import com.lyq.kb.entity.Resume;
 import com.lyq.kb.entity.Question;
+import com.lyq.kb.entity.ResumeJobRel;
+import com.lyq.kb.entity.User;
 import com.lyq.kb.mapper.InterviewMapper;
+import com.lyq.kb.mapper.JobMapper;
 import com.lyq.kb.mapper.PracticeMapper;
 import com.lyq.kb.mapper.QuestionMapper;
+import com.lyq.kb.mapper.ResumeJobRelMapper;
 import com.lyq.kb.mapper.ResumeMapper;
+import com.lyq.kb.mapper.UserMapper;
 import com.lyq.kb.service.ResumeService;
 import lombok.RequiredArgsConstructor;
 import org.apache.pdfbox.Loader;
@@ -30,12 +38,19 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalDouble;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -49,10 +64,19 @@ public class ResumeServiceImpl implements ResumeService {
     /** 原文进prompt的上限，防超长简历把上下文撑爆 */
     private static final int MAX_TEXT = 30000;
 
+    /** 学历优先级，索引越小越高，用于取最高学历 */
+    private static final List<String> DEGREE_RANK = List.of("博士", "硕士", "本科", "大专");
+
+    /** 从"2023-06"这类时间串里抽年份 */
+    private static final Pattern YEAR = Pattern.compile("(19|20)\\d{2}");
+
     private final ResumeMapper resumeMapper;
+    private final ResumeJobRelMapper resumeJobRelMapper;
     private final PracticeMapper practiceMapper;
     private final InterviewMapper interviewMapper;
     private final QuestionMapper questionMapper;
+    private final UserMapper userMapper;
+    private final JobMapper jobMapper;
     private final AiGrader aiGrader;
     private final ObjectMapper objectMapper;
 
@@ -100,6 +124,7 @@ public class ResumeServiceImpl implements ResumeService {
         row.setRawText(text);
         row.setContentJson(aiParsed ? node.toString() : EMPTY_TEMPLATE);
         row.setFileName(name);
+        fillSummary(row);
         resumeMapper.insert(row);
 
         ResumeImportVO vo = new ResumeImportVO();
@@ -122,6 +147,7 @@ public class ResumeServiceImpl implements ResumeService {
         row.setTargetJob(req == null ? null : req.getTargetJob());
         row.setContentJson(req != null && req.getContentJson() != null && !req.getContentJson().isBlank()
                 ? req.getContentJson() : EMPTY_TEMPLATE);
+        fillSummary(row);
         resumeMapper.insert(row);
         return row;
     }
@@ -153,13 +179,18 @@ public class ResumeServiceImpl implements ResumeService {
         if (req.getContentJson() != null && !req.getContentJson().isBlank()) {
             row.setContentJson(req.getContentJson());
         }
+        // 内容变了重算公共字段；已提交的简历保存后管理员直接看到最新版
+        fillSummary(row);
         resumeMapper.updateById(row);
     }
 
     @Override
     public void delete(Long id) {
         AuthUtil.requireWritable();
-        owned(id);
+        Resume row = owned(id);
+        if (row.getSubmitStatus() != null && row.getSubmitStatus() == 1) {
+            throw new IllegalArgumentException("简历已提交管理员审阅，请先撤回再删除");
+        }
         resumeMapper.deleteById(id);
     }
 
@@ -211,6 +242,10 @@ public class ResumeServiceImpl implements ResumeService {
     private void saveAnalysis(Resume r, Map<String, Object> analysis) {
         try {
             r.setAnalysisJson(objectMapper.writeValueAsString(analysis));
+            // 得分同步拍平到列，管理员可直接按分筛选/统计
+            if (analysis.get("score") instanceof Number n) {
+                r.setAiScore(n.intValue());
+            }
             resumeMapper.updateById(r);
         } catch (Exception ignored) {
             // 落库失败不影响用户看结果
@@ -424,6 +459,7 @@ public class ResumeServiceImpl implements ResumeService {
         row.setTargetJob(req.getTargetJob());
         row.setRawText(md);
         row.setContentJson(contentJson);
+        fillSummary(row);
         if (existing == null) {
             row.setTitle(deriveTitle(contentJson, req.getTargetJob()));
             resumeMapper.insert(row);
@@ -521,6 +557,361 @@ public class ResumeServiceImpl implements ResumeService {
             }
         }
         return sb.toString();
+    }
+
+    // ===== 公共字段拍平 =====
+
+    /** 从contentJson抽公共字段落到列上，供管理员SQL筛选/统计；每次正文落库时调 */
+    private void fillSummary(Resume row) {
+        if (row.getContentJson() == null || row.getContentJson().isBlank()) {
+            return;
+        }
+        JsonNode c;
+        try {
+            c = objectMapper.readTree(row.getContentJson());
+        } catch (Exception e) {
+            return;
+        }
+        JsonNode b = c.path("basics");
+        row.setName(blankToNull(b.path("name")));
+        row.setPhone(blankToNull(b.path("phone")));
+        row.setCity(blankToNull(b.path("city")));
+        row.setEducation(highestDegree(c.path("education")));
+        row.setWorkYears(estimateWorkYears(c.path("work")));
+        row.setSkills(skillsSummary(c.path("skills")));
+    }
+
+    private String blankToNull(JsonNode field) {
+        String v = field.asText("").trim();
+        return v.isEmpty() ? null : v;
+    }
+
+    /** 多段教育经历取最高学历；一段都没匹配上四档时记"其他" */
+    private String highestDegree(JsonNode eduArr) {
+        if (eduArr == null || eduArr.isEmpty()) {
+            return null;
+        }
+        int best = DEGREE_RANK.size();
+        for (JsonNode e : eduArr) {
+            String degree = e.path("degree").asText("");
+            for (int i = 0; i < DEGREE_RANK.size(); i++) {
+                if (degree.contains(DEGREE_RANK.get(i)) && i < best) {
+                    best = i;
+                }
+            }
+        }
+        return best == DEGREE_RANK.size() ? "其他" : DEGREE_RANK.get(best);
+    }
+
+    /** 工作年限：按最早一段工作经历的开始年份估算，抽不到年份返回null */
+    private Integer estimateWorkYears(JsonNode workArr) {
+        if (workArr == null || workArr.isEmpty()) {
+            return 0;
+        }
+        int earliest = Integer.MAX_VALUE;
+        for (JsonNode w : workArr) {
+            Matcher m = YEAR.matcher(w.path("start").asText(""));
+            if (m.find()) {
+                earliest = Math.min(earliest, Integer.parseInt(m.group()));
+            }
+        }
+        if (earliest == Integer.MAX_VALUE) {
+            return null;
+        }
+        return Math.max(0, LocalDate.now().getYear() - earliest);
+    }
+
+    /** 技能摘要：所有分类的条目平铺顿号拼接，截断500字 */
+    private String skillsSummary(JsonNode skillsArr) {
+        if (skillsArr == null || skillsArr.isEmpty()) {
+            return null;
+        }
+        List<String> all = new ArrayList<>();
+        for (JsonNode s : skillsArr) {
+            s.path("items").forEach(i -> {
+                if (!i.asText("").isBlank()) {
+                    all.add(i.asText());
+                }
+            });
+        }
+        if (all.isEmpty()) {
+            return null;
+        }
+        String joined = String.join("、", all);
+        return joined.length() > 500 ? joined.substring(0, 500) : joined;
+    }
+
+    // ===== 提交给管理员 =====
+
+    @Override
+    public void submit(Long id, Long jobId) {
+        AuthUtil.requireWritable();
+        Resume row = owned(id);
+        if (row.getSubmitStatus() != null && row.getSubmitStatus() == 1) {
+            throw new IllegalArgumentException("该简历已提交，请等待管理员审阅或先撤回");
+        }
+        if (jobId != null && jobMapper.selectById(jobId) == null) {
+            throw new IllegalArgumentException("意向岗位不存在");
+        }
+        // 提交时重算一遍公共字段，保证管理员筛选用的是最新数据；
+        // 用UpdateWrapper显式set，把remark/推荐岗也一并清掉，避免上轮残留
+        fillSummary(row);
+        resumeMapper.update(null, new UpdateWrapper<Resume>()
+                .eq("id", id)
+                .set("submit_status", 1)
+                .set("submit_time", LocalDateTime.now())
+                .set("applied_job_id", jobId)
+                .set("assigned_job_id", null)
+                .set("remark", null)
+                .set("name", row.getName())
+                .set("phone", row.getPhone())
+                .set("city", row.getCity())
+                .set("education", row.getEducation())
+                .set("work_years", row.getWorkYears())
+                .set("skills", row.getSkills()));
+    }
+
+    @Override
+    public void withdraw(Long id) {
+        AuthUtil.requireWritable();
+        Resume row = owned(id);
+        if (row.getSubmitStatus() == null || row.getSubmitStatus() != 1) {
+            throw new IllegalArgumentException("该简历不在待审阅状态，无需撤回");
+        }
+        resumeMapper.update(null, new UpdateWrapper<Resume>()
+                .eq("id", id)
+                .set("submit_status", 0));
+    }
+
+    // ===== 管理员审阅 =====
+
+    @Override
+    public Map<String, Object> adminPage(Integer submitStatus, String education, String keyword,
+                                         long page, long size) {
+        AuthUtil.requireAdmin();
+        QueryWrapper<Resume> w = new QueryWrapper<Resume>()
+                .select(Resume.class, info -> {
+                    String col = info.getColumn();
+                    return !"raw_text".equals(col) && !"content_json".equals(col);
+                });
+        if (submitStatus == null || submitStatus < 1) {
+            // 审阅列表只展示已提交的；未提交的属于用户私人草稿，管理员不可见
+            w.ge("submit_status", 1);
+        } else {
+            w.eq("submit_status", submitStatus);
+        }
+        if (education != null && !education.isBlank()) {
+            w.eq("education", education);
+        }
+        if (keyword != null && !keyword.isBlank()) {
+            String kw = keyword.trim();
+            w.and(q -> q.like("name", kw).or().like("title", kw).or().like("target_job", kw));
+        }
+        // 提交的排前面看新的
+        w.orderByDesc("submit_time").orderByDesc("update_time");
+        Page<Resume> p = resumeMapper.selectPage(new Page<>(page, size), w);
+
+        // 批量带出提交人昵称和岗位名，避免前端N+1
+        List<Map<String, Object>> records = new ArrayList<>();
+        if (!p.getRecords().isEmpty()) {
+            Set<Long> uids = p.getRecords().stream().map(Resume::getUserId).collect(Collectors.toSet());
+            Map<Long, String> nicknames = userMapper.selectBatchIds(uids).stream()
+                    .collect(Collectors.toMap(User::getId,
+                            u -> u.getNickname() == null ? u.getUsername() : u.getNickname(), (a, b) -> a));
+            Set<Long> jids = new HashSet<>();
+            p.getRecords().forEach(r -> {
+                if (r.getAppliedJobId() != null) {
+                    jids.add(r.getAppliedJobId());
+                }
+            });
+            // 已推荐岗位走关系表，一份简历可能推了好几个
+            Set<Long> rids = p.getRecords().stream().map(Resume::getId).collect(Collectors.toSet());
+            List<ResumeJobRel> rels = rids.isEmpty() ? List.of()
+                    : resumeJobRelMapper.selectList(new QueryWrapper<ResumeJobRel>().in("resume_id", rids)
+                            .orderByAsc("create_time"));
+            rels.forEach(rel -> jids.add(rel.getJobId()));
+            Map<Long, String> jobTitles = jids.isEmpty() ? Map.of()
+                    : jobMapper.selectBatchIds(jids).stream().collect(Collectors.toMap(Job::getId,
+                            j -> j.getTitle() + (j.getCompany() == null ? "" : "·" + j.getCompany()),
+                            (a, b) -> a));
+            Map<Long, List<Long>> relMap = rels.stream().collect(Collectors.groupingBy(
+                    ResumeJobRel::getResumeId,
+                    LinkedHashMap::new,
+                    Collectors.mapping(ResumeJobRel::getJobId, Collectors.toList())));
+            for (Resume r : p.getRecords()) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("resume", r);
+                m.put("nickname", nicknames.get(r.getUserId()));
+                m.put("appliedJob", r.getAppliedJobId() == null ? null : jobTitles.get(r.getAppliedJobId()));
+                List<Long> recIds = relMap.getOrDefault(r.getId(), List.of());
+                m.put("recommendedJobIds", recIds);
+                m.put("recommendedJobs", recIds.stream().map(jobTitles::get)
+                        .filter(t -> t != null).collect(Collectors.toList()));
+                records.add(m);
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("records", records);
+        out.put("total", p.getTotal());
+        return out;
+    }
+
+    @Override
+    public Resume adminDetail(Long id) {
+        AuthUtil.requireAdmin();
+        Resume row = resumeMapper.selectById(id);
+        if (row == null) {
+            throw new IllegalArgumentException("简历不存在");
+        }
+        // 未提交的是用户私人草稿，管理员不可见
+        if (row.getSubmitStatus() == null || row.getSubmitStatus() < 1) {
+            throw new IllegalArgumentException("该简历尚未提交，无法查看");
+        }
+        return row;
+    }
+
+    @Override
+    public void assign(Long id, Long jobId) {
+        AuthUtil.requireAdmin();
+        Resume r = resumeMapper.selectById(id);
+        if (r == null) {
+            throw new IllegalArgumentException("简历不存在");
+        }
+        // 只有待审阅的能推荐，已推荐的允许追加改推；未提交不许推
+        Integer st = r.getSubmitStatus();
+        if (st != null && st == 2) {
+            throw new IllegalArgumentException("已驳回的简历不能推荐岗位，请用户修改后重新提交");
+        }
+        if (st == null || (st != 1 && st != 3)) {
+            throw new IllegalArgumentException("该简历当前状态不允许推荐岗位");
+        }
+        if (jobId == null || jobMapper.selectById(jobId) == null) {
+            throw new IllegalArgumentException("岗位不存在");
+        }
+        // 关系表追加，重复推同一个直接忽略；assigned_job_id记最新一个兼容旧展示
+        Long exists = resumeJobRelMapper.selectCount(new QueryWrapper<ResumeJobRel>()
+                .eq("resume_id", id).eq("job_id", jobId));
+        if (exists == null || exists == 0) {
+            ResumeJobRel rel = new ResumeJobRel();
+            rel.setResumeId(id);
+            rel.setJobId(jobId);
+            resumeJobRelMapper.insert(rel);
+        }
+        // 推荐即视为审阅完成：状态转已推荐
+        resumeMapper.update(null, new UpdateWrapper<Resume>()
+                .eq("id", id)
+                .set("assigned_job_id", jobId)
+                .set("submit_status", 3));
+    }
+
+    @Override
+    public void unassign(Long id, Long jobId) {
+        AuthUtil.requireAdmin();
+        if (resumeMapper.selectById(id) == null) {
+            throw new IllegalArgumentException("简历不存在");
+        }
+        resumeJobRelMapper.delete(new QueryWrapper<ResumeJobRel>()
+                .eq("resume_id", id).eq("job_id", jobId));
+        // 还剩推荐就保持已推荐并刷新最新岗位；全撤完了回到待审阅继续处理
+        List<ResumeJobRel> left = resumeJobRelMapper.selectList(new QueryWrapper<ResumeJobRel>()
+                .eq("resume_id", id).orderByDesc("create_time"));
+        if (left.isEmpty()) {
+            resumeMapper.update(null, new UpdateWrapper<Resume>()
+                    .eq("id", id)
+                    .set("assigned_job_id", null)
+                    .set("submit_status", 1));
+        } else {
+            resumeMapper.update(null, new UpdateWrapper<Resume>()
+                    .eq("id", id)
+                    .set("assigned_job_id", left.get(0).getJobId()));
+        }
+    }
+
+    /** 按关系表查出已推荐岗位的完整信息，推荐时间升序 */
+    private List<Job> recommendedJobList(Long resumeId) {
+        List<ResumeJobRel> rels = resumeJobRelMapper.selectList(new QueryWrapper<ResumeJobRel>()
+                .eq("resume_id", resumeId).orderByAsc("create_time"));
+        if (rels.isEmpty()) {
+            return List.of();
+        }
+        List<Long> jids = rels.stream().map(ResumeJobRel::getJobId).collect(Collectors.toList());
+        Map<Long, Job> jobs = jobMapper.selectBatchIds(jids).stream()
+                .collect(Collectors.toMap(Job::getId, j -> j, (a, b) -> a));
+        return jids.stream().map(jobs::get).filter(j -> j != null).collect(Collectors.toList());
+    }
+
+    @Override
+    public List<Job> adminRecommendedJobs(Long id) {
+        AuthUtil.requireAdmin();
+        if (resumeMapper.selectById(id) == null) {
+            throw new IllegalArgumentException("简历不存在");
+        }
+        return recommendedJobList(id);
+    }
+
+    @Override
+    public List<Job> recommendedJobs(Long id) {
+        // 只能看自己简历的推荐
+        owned(id);
+        return recommendedJobList(id);
+    }
+
+    @Override
+    public void sendBack(Long id, String remark) {
+        AuthUtil.requireAdmin();
+        Resume r = resumeMapper.selectById(id);
+        if (r == null) {
+            throw new IllegalArgumentException("简历不存在");
+        }
+        // 已推荐的不能再驳回（岗位已推出去了）；只有待审阅的才允许驳回
+        if (r.getSubmitStatus() == null || r.getSubmitStatus() != 1) {
+            throw new IllegalArgumentException("只有待审阅的简历才能驳回");
+        }
+        resumeMapper.update(null, new UpdateWrapper<Resume>()
+                .eq("id", id)
+                .set("submit_status", 2)
+                .set("assigned_job_id", null)
+                .set("remark", remark == null || remark.isBlank() ? "管理员退回，请完善后重新提交" : remark.trim()));
+    }
+
+    @Override
+    public Map<String, Object> adminStats() {
+        AuthUtil.requireAdmin();
+        // 只取统计需要的列，不拉正文大字段；只统计已提交的，未提交属于私人草稿
+        List<Resume> all = resumeMapper.selectList(new QueryWrapper<Resume>()
+                .select("id", "user_id", "city", "education", "ai_score", "submit_status"))
+                .stream().filter(r -> r.getSubmitStatus() != null && r.getSubmitStatus() >= 1)
+                .collect(Collectors.toList());
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("total", all.size());
+        out.put("submitted", (long) all.size());
+        out.put("pending", all.stream()
+                .filter(r -> r.getSubmitStatus() != null && r.getSubmitStatus() == 1).count());
+        out.put("returned", all.stream()
+                .filter(r -> r.getSubmitStatus() != null && r.getSubmitStatus() == 2).count());
+        out.put("assigned", all.stream()
+                .filter(r -> r.getSubmitStatus() != null && r.getSubmitStatus() == 3).count());
+        OptionalDouble avg = all.stream().filter(r -> r.getAiScore() != null)
+                .mapToInt(Resume::getAiScore).average();
+        out.put("avgScore", avg.isPresent() ? Math.round(avg.getAsDouble()) : 0);
+        out.put("byEducation", distribution(all.stream()
+                .map(r -> r.getEducation() == null ? "未填" : r.getEducation())));
+        out.put("byCity", distribution(all.stream()
+                .map(r -> r.getCity() == null || r.getCity().isBlank() ? "未填" : r.getCity())));
+        return out;
+    }
+
+    /** 值→计数分布，按计数降序 */
+    private List<Map<String, Object>> distribution(java.util.stream.Stream<String> values) {
+        return values.collect(Collectors.groupingBy(v -> v, LinkedHashMap::new, Collectors.counting()))
+                .entrySet().stream()
+                .sorted((a, b) -> Long.compare(b.getValue(), a.getValue()))
+                .map(e -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("name", e.getKey());
+                    m.put("count", e.getValue());
+                    return m;
+                }).toList();
     }
 
     // ===== 导出 =====

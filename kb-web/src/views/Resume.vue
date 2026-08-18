@@ -25,7 +25,12 @@
         <div class="list">
           <div v-for="r in list" :key="r.id" class="item" :class="{ active: active && active.id === r.id }"
                @click="select(r)">
-            <div class="t">{{ r.title }}</div>
+            <div class="t">
+              {{ r.title }}
+              <span v-if="r.submitStatus === 1" class="st st1">待审阅</span>
+              <span v-else-if="r.submitStatus === 2" class="st st2">已驳回</span>
+              <span v-else-if="r.submitStatus === 3" class="st st3">已推荐</span>
+            </div>
             <div class="m">{{ r.targetJob || '未设目标岗位' }} · {{ fmt(r.updateTime) }}</div>
           </div>
           <div v-if="!list.length" class="empty">还没有简历，新建或导入一份试试</div>
@@ -40,7 +45,16 @@
           <el-button type="primary" :loading="saving" @click="save">保存</el-button>
           <el-button @click="openExport">导出</el-button>
           <el-button type="danger" plain @click="del">删除</el-button>
+          <el-button v-if="canSubmit" type="success" plain @click="openSubmit">提交给管理员</el-button>
+          <el-button v-else-if="active.submitStatus === 1" plain @click="doWithdraw">撤回</el-button>
+          <el-tag v-if="active.submitStatus === 1" type="warning" effect="plain">待审阅</el-tag>
+          <el-tag v-else-if="active.submitStatus === 2" type="danger" effect="plain">已驳回</el-tag>
+          <el-tag v-else-if="active.submitStatus === 3" type="success" effect="plain">已推荐岗位</el-tag>
         </div>
+
+        <!-- 管理员退回理由提示 -->
+        <el-alert v-if="active.submitStatus === 2 && active.remark" class="return-tip"
+                  :title="'管理员驳回：' + active.remark" type="error" :closable="false" show-icon />
 
         <el-tabs v-model="tab" class="tabs">
           <!-- ===== 编辑 ===== -->
@@ -215,6 +229,30 @@
               <div v-if="genText" class="stream-box mono">{{ genText }}</div>
             </div>
           </el-tab-pane>
+
+          <!-- ===== 推荐岗位：管理员为这份简历推荐的岗位，卡片式展示 ===== -->
+          <el-tab-pane name="recommend">
+            <template #label>推荐岗位<span v-if="recJobs.length" class="rec-badge">{{ recJobs.length }}</span></template>
+            <div class="rec-wrap">
+              <div v-if="recJobs.length" class="rec-tip">管理员为你的简历推荐了 {{ recJobs.length }} 个岗位，点卡片看介绍和针对性AI面试题</div>
+              <div v-else class="rec-empty">还没收到推荐：提交简历后，管理员会按你的技能帮你匹配合适的岗位</div>
+              <div class="rec-grid">
+                <div v-for="j in recJobs" :key="j.id" class="rec-card" @click="openRecJob(j)">
+                  <div class="rc-top">
+                    <b class="rc-title">{{ j.title }}</b>
+                    <span class="rc-sal">{{ j.salary || '薪资面议' }}</span>
+                  </div>
+                  <div class="rc-company">{{ j.company || '公司未公开' }}<template v-if="j.city"> · {{ j.city }}</template></div>
+                  <div class="rc-chips">
+                    <span v-if="j.experience" class="rc-chip">{{ j.experience }}</span>
+                    <span v-if="j.education" class="rc-chip">{{ j.education }}</span>
+                  </div>
+                  <div class="rc-jd">{{ (j.jdText || '').trim() || '（未录入JD职责描述）' }}</div>
+                  <div class="rc-more">查看详情与AI面试题 ›</div>
+                </div>
+              </div>
+            </div>
+          </el-tab-pane>
         </el-tabs>
       </main>
 
@@ -241,6 +279,51 @@
         <el-button type="primary" @click="printPdf">导出PDF</el-button>
       </template>
     </el-dialog>
+    <!-- 提交给管理员：可选个意向岗位，提交后管理员可在后台审阅/推荐岗位 -->
+    <el-dialog v-model="submitOpen" title="提交给管理员" width="460px">
+      <p class="submit-tip">提交后管理员可查看这份简历，帮你匹配合适的岗位，提交前请先保存最新内容。</p>
+      <el-select v-model="submitJobId" placeholder="意向岗位（可选）" clearable filterable style="width: 100%">
+        <el-option v-for="j in jobOptions" :key="j.id"
+                   :label="`${j.title}${j.company ? ' · ' + j.company : ''}${j.city ? ' · ' + j.city : ''}`"
+                   :value="j.id" />
+      </el-select>
+      <template #footer>
+        <el-button @click="submitOpen = false">取消</el-button>
+        <el-button type="primary" :loading="submitting" @click="doSubmit">确认提交</el-button>
+      </template>
+    </el-dialog>
+    <!-- 推荐岗位详情：完整介绍 + 针对这个岗位的AI面试简答题 -->
+    <el-dialog v-model="recJobOpen" :title="recJob?.title || '岗位详情'" width="640px" top="6vh">
+      <template v-if="recJob">
+        <div class="rjd-hero">
+          <div>
+            <div class="rjd-title">{{ recJob.title }}</div>
+            <div class="rjd-meta">
+              {{ recJob.company || '公司未公开' }}<template v-if="recJob.city"> · {{ recJob.city }}</template>
+              <template v-if="recJob.experience"> · {{ recJob.experience }}</template>
+              <template v-if="recJob.education"> · {{ recJob.education }}</template>
+            </div>
+          </div>
+          <div class="rjd-sal">{{ recJob.salary || '薪资面议' }}</div>
+        </div>
+        <div class="rjd-sec">岗位介绍</div>
+        <div class="rjd-jd">{{ (recJob.jdText || '').trim() || '（未录入JD职责描述）' }}</div>
+        <div class="rjd-sec">针对性AI面试题
+          <el-button size="small" type="primary" :loading="recQuestionsLoading"
+                     @click="loadRecQuestions">{{ recQuestions.length ? '重新生成' : '生成面试题' }}</el-button>
+        </div>
+        <div v-if="recQuestionsLoading" class="rjd-q-tip">AI正在根据岗位要求出题…</div>
+        <div v-else-if="recQuestions.length" class="rjd-qs">
+          <div v-for="(q, i) in recQuestions" :key="i" class="rjd-q">{{ i + 1 }}. {{ q }}</div>
+          <div class="rjd-q-tip">建议先在草稿里写出答案，再去模拟面试里练一练</div>
+        </div>
+        <div v-else class="rjd-q-tip">点上面按钮，AI会按这个岗位的具体要求出简答题，帮你提前准备</div>
+      </template>
+      <template #footer>
+        <a v-if="recJob?.jobUrl" :href="recJob.jobUrl" target="_blank" class="rjd-link">查看原帖 ↗</a>
+        <el-button @click="recJobOpen = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -249,6 +332,7 @@ import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import http, { upload, fetchText, streamPost } from '../api/http.js'
+import { buildResumeHtml } from '../utils/resumeHtml.js'
 
 const router = useRouter()
 
@@ -283,6 +367,44 @@ const hasContent = computed(() =>
 
 const exportOpen = ref(false)
 const exportText = ref('')
+
+// 提交给管理员：意向岗位选项拉已上架岗位
+const submitOpen = ref(false)
+const submitting = ref(false)
+const submitJobId = ref(null)
+const jobOptions = ref([])
+const canSubmit = computed(() => !active.value
+  || (active.value.submitStatus !== 1 && active.value.submitStatus !== 3))
+
+// 推荐岗位：管理员为这份简历推荐的岗位列表（可多个）
+const recJobs = ref([])
+const recJobOpen = ref(false)
+const recJob = ref(null)
+const recQuestions = ref([])
+const recQuestionsLoading = ref(false)
+
+async function loadRecJobs(resumeId) {
+  try { recJobs.value = await http.get(`/resume/${resumeId}/recommended`) }
+  catch { recJobs.value = [] }
+}
+
+function openRecJob(j) {
+  recJob.value = j
+  recQuestions.value = []
+  recJobOpen.value = true
+}
+
+/** 针对推荐岗位生成AI面试简答题（后端按岗位结构化需求出题） */
+async function loadRecQuestions() {
+  recQuestionsLoading.value = true
+  try {
+    recQuestions.value = await http.post(`/job/${recJob.value.id}/recommend`)
+  } catch {
+    ElMessage.error('AI出题失败，稍后再试')
+  } finally {
+    recQuestionsLoading.value = false
+  }
+}
 
 let analyzeCtrl = null
 let genCtrl = null
@@ -328,6 +450,8 @@ async function select(r) {
   jdResult.value = null
   jdStreamText.value = ''
   tab.value = 'edit'
+  // 拉这份简历收到的推荐岗位
+  loadRecJobs(d.id)
 }
 
 function applyContent(json) {
@@ -389,6 +513,36 @@ async function del() {
   active.value = null
   ElMessage.success('已删除')
   await loadList()
+}
+
+// ===== 提交给管理员 =====
+async function openSubmit() {
+  if (!active.value) return
+  // 先把表单最新内容落库，管理员看到的就是刚编辑的版
+  await save()
+  submitJobId.value = null
+  try {
+    jobOptions.value = await http.get('/job/open')
+  } catch { jobOptions.value = [] }
+  submitOpen.value = true
+}
+
+async function doSubmit() {
+  submitting.value = true
+  try {
+    await http.post(`/resume/${active.value.id}/submit`, submitJobId.value ? { jobId: submitJobId.value } : {})
+    submitOpen.value = false
+    ElMessage.success('已提交，等待管理员审阅')
+    await loadList(active.value.id)
+  } finally {
+    submitting.value = false
+  }
+}
+
+async function doWithdraw() {
+  await http.post(`/resume/${active.value.id}/withdraw`)
+  ElMessage.success('已撤回')
+  await loadList(active.value.id)
 }
 
 // ===== 分析 =====
@@ -500,90 +654,7 @@ async function openExport() {
   exportOpen.value = true
 }
 
-/** 转义用户输入，拼HTML防注入 */
-const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-
-const resumeHtml = computed(() => buildResumeHtml())
-
-/**
- * 拼一个独立的A4简历页：预览嵌iframe、导出在新窗口打印，
- * 新窗口里只有简历本身，不会把应用页面带进PDF
- */
-function buildResumeHtml() {
-  const b = form.basics
-  const rg = (s, e) => [s, e].filter(Boolean).join(' ~ ')
-  const contacts = [
-    ['电话', b.phone], ['邮箱', b.email], ['城市', b.city], ['主页', b.github || b.blog]
-  ].filter(c => c[1]).map(c => `<div><span>${c[0]}</span>${esc(c[1])}</div>`).join('')
-  const ln = (left, mid, date) =>
-    `<div class="ln"><b>${esc(left)}</b>${mid ? `<span>${esc(mid)}</span>` : ''}${date ? `<em>${esc(date)}</em>` : ''}</div>`
-  const lis = arr => (arr || []).filter(h => h && h.trim())
-    .map(h => `<li>${esc(h)}</li>`).join('')
-
-  const secs = []
-  if (form.education.length) secs.push(`<section class="sec"><h3>教育经历</h3>${
-    form.education.map(e => `<div class="item">${ln(e.school, [e.degree, e.major].filter(Boolean).join(' · '), rg(e.start, e.end))}</div>`).join('')
-  }</section>`)
-  if (form.work.length) secs.push(`<section class="sec"><h3>工作经历</h3>${
-    form.work.map(w => `<div class="item">${ln(w.company, w.position, rg(w.start, w.end))}${lis(w.highlights) ? `<ul>${lis(w.highlights)}</ul>` : ''}</div>`).join('')
-  }</section>`)
-  if (form.projects.length) secs.push(`<section class="sec"><h3>项目 / 实践经历</h3>${
-    form.projects.map(p => `<div class="item">${ln(p.name, p.role, rg(p.start, p.end))}${
-      p.techStack && p.techStack.length ? `<div class="tech"><b>关键词：</b>${esc(p.techStack.join('、'))}</div>` : ''}${
-      lis(p.highlights) ? `<ul>${lis(p.highlights)}</ul>` : ''}</div>`).join('')
-  }</section>`)
-  if (form.skills.length) secs.push(`<section class="sec skills"><h3>技能 / 专长</h3>${
-    form.skills.map(s => `<div class="row"><b>${esc(s.category || '其他')}：</b>${esc((s.items || []).filter(Boolean).join('、'))}</div>`).join('')
-  }</section>`)
-  if (form.awards.length) secs.push(`<section class="sec"><h3>荣誉奖项</h3><ul class="awards">${lis(form.awards)}</ul></section>`)
-
-  return `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<title>${esc(b.name || '简历')}</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  @page { size: A4; margin: 12mm 14mm; }
-  body { font-family: "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", sans-serif; color: #2b2b2b;
-         background: #e9eaec; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .page { width: 210mm; min-height: 296mm; margin: 0 auto; background: #fff; padding: 14mm 16mm; }
-  .hd { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px;
-        border-bottom: 3px solid #2b5fad; padding-bottom: 12px; }
-  .name { font-size: 30px; font-weight: 700; color: #1f2d3d; letter-spacing: 4px; }
-  .job { margin-top: 6px; font-size: 13px; color: #2b5fad; font-weight: 600; letter-spacing: 1px; }
-  .hd-contact { text-align: right; font-size: 12px; color: #333; line-height: 1.9; }
-  .hd-contact span { color: #2b5fad; margin-right: 6px; }
-  .sec { margin-top: 15px; }
-  .sec h3 { font-size: 15px; color: #2b5fad; letter-spacing: 3px; border-bottom: 1px solid #d9e0ec;
-            padding-bottom: 4px; margin-bottom: 9px; }
-  .sec h3::before { content: ""; display: inline-block; width: 4px; height: 14px; background: #2b5fad;
-                    margin-right: 8px; vertical-align: -1px; }
-  .item { margin-bottom: 9px; }
-  .ln { display: flex; align-items: baseline; gap: 10px; }
-  .ln b { font-size: 13.5px; color: #222; }
-  .ln span { font-size: 12.5px; color: #4a4f57; }
-  .ln em { margin-left: auto; font-style: normal; font-size: 12px; color: #8a8f99; white-space: nowrap; }
-  .item ul, .awards { margin: 4px 0 0 18px; }
-  .item li, .awards li { font-size: 12.5px; line-height: 1.75; color: #333; }
-  .tech { font-size: 12px; color: #4a4f57; margin-top: 3px; }
-  .tech b { color: #2b5fad; font-weight: 600; }
-  .skills .row { font-size: 12.5px; line-height: 2; color: #333; }
-  .skills .row b { color: #222; }
-  @media print { body { background: #fff; } .page { width: auto; min-height: 0; padding: 0; } }
-</style>
-</head>
-<body><div class="page">
-  <header class="hd">
-    <div>
-      <div class="name">${esc(b.name || '未填写姓名')}</div>
-      ${meta.targetJob ? `<div class="job">求职意向：${esc(meta.targetJob)}</div>` : ''}
-    </div>
-    <div class="hd-contact">${contacts}</div>
-  </header>
-  ${secs.join('\n')}
-</div></body></html>`
-}
+const resumeHtml = computed(() => buildResumeHtml(form, meta.targetJob))
 
 /** 新窗口只写简历页再打印，目标选“另存为PDF”即得可投递的成品 */
 function printPdf() {
@@ -592,7 +663,7 @@ function printPdf() {
     ElMessage.warning('浏览器拦截了弹窗，请允许本站弹出窗口后重试')
     return
   }
-  win.document.write(buildResumeHtml())
+  win.document.write(buildResumeHtml(form, meta.targetJob))
   win.document.close()
   setTimeout(() => { win.focus(); win.print() }, 400)
 }
@@ -673,9 +744,16 @@ onBeforeUnmount(abortStreams)
   padding: 18px 22px; min-width: 0; box-shadow: var(--kb-shadow-sm); max-width: 780px;
 }
 .main.placeholder { display: flex; align-items: center; justify-content: center; color: var(--kb-ink-3); max-width: none; }
-.main-head { display: flex; gap: 10px; margin-bottom: 8px; }
+.main-head { display: flex; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; align-items: center; }
 .title-input { max-width: 260px; }
 .job-input { max-width: 340px; }
+.return-tip { margin-bottom: 10px; }
+.submit-tip { margin: 0 0 12px; font-size: 13px; color: var(--kb-ink-3); }
+/* 侧栏简历状态角标 */
+.st { font-size: 11px; padding: 1px 6px; border-radius: 8px; margin-left: 6px; white-space: nowrap; }
+.st1 { background: #fff7e6; color: #d48806; }
+.st2 { background: #fff1f0; color: #cf1322; }
+.st3 { background: #f6ffed; color: #389e0d; }
 
 .form { display: flex; flex-direction: column; gap: 22px; }
 .sec h3 { font-size: 15px; font-weight: 600; margin: 0 0 12px; display: flex; align-items: center; gap: 10px; }
@@ -764,6 +842,64 @@ onBeforeUnmount(abortStreams)
 /* 导出预览：iframe嵌独立简历页，和打印成品完全一致 */
 .export-frame { width: 100%; height: 70vh; border: 1px solid var(--kb-line); border-radius: 8px; background: #e9eaec; }
 .export-tip { font-size: 12px; color: var(--kb-ink-3); margin-right: auto; }
+
+/* ===== 推荐岗位：大厂招聘风格卡片 ===== */
+.rec-badge {
+  display: inline-block; min-width: 16px; margin-left: 5px; padding: 0 4px;
+  font-size: 11px; line-height: 16px; text-align: center; border-radius: 8px;
+  background: #389e0d; color: #fff;
+}
+.rec-wrap { padding: 6px 2px; }
+.rec-tip { font-size: 13px; color: var(--kb-ink-2); margin-bottom: 12px; }
+.rec-empty { font-size: 13px; color: var(--kb-ink-3); padding: 26px 0; text-align: center; }
+.rec-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.rec-card {
+  border: 1px solid var(--kb-line); border-radius: var(--kb-radius, 10px);
+  background: #fff; padding: 14px 16px; cursor: pointer;
+  transition: all .15s;
+}
+.rec-card:hover {
+  border-color: #3370ff; transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(51, 112, 255, .10);
+}
+.rc-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.rc-title { font-size: 15px; color: var(--kb-ink, #1f2329); }
+.rc-sal { font-size: 14px; color: #389e0d; font-weight: 700; white-space: nowrap; }
+.rc-company { margin-top: 5px; font-size: 13px; color: var(--kb-ink-2); }
+.rc-chips { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 5px; }
+.rc-chip {
+  font-size: 12px; color: #555; background: #f4f5f7;
+  border-radius: 4px; padding: 1px 8px;
+}
+.rc-jd {
+  margin-top: 9px; font-size: 12px; color: var(--kb-ink-3); line-height: 1.7;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.rc-more { margin-top: 8px; font-size: 12px; color: #3370ff; }
+
+/* 推荐岗位详情弹窗 */
+.rjd-hero {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+  padding: 14px 16px; border-radius: 10px;
+  background: linear-gradient(135deg, #f0f6ff, #e8f5ee);
+}
+.rjd-title { font-size: 17px; font-weight: 700; }
+.rjd-meta { margin-top: 5px; font-size: 13px; color: var(--kb-ink-2); }
+.rjd-sal { font-size: 18px; color: #389e0d; font-weight: 700; white-space: nowrap; }
+.rjd-sec {
+  margin: 16px 0 8px; font-size: 14px; font-weight: 600;
+  display: flex; align-items: center; gap: 10px;
+}
+.rjd-sec::before { content: ''; width: 3px; height: 14px; border-radius: 2px; background: #3370ff; }
+.rjd-jd { font-size: 13px; line-height: 1.8; color: var(--kb-ink-2); white-space: pre-wrap;
+  max-height: 240px; overflow: auto; }
+.rjd-qs { display: flex; flex-direction: column; gap: 8px; }
+.rjd-q {
+  font-size: 13px; line-height: 1.7; color: var(--kb-ink);
+  background: #f7f8fa; border-radius: 8px; padding: 8px 12px;
+}
+.rjd-q-tip { font-size: 12px; color: var(--kb-ink-3); margin-top: 8px; }
+.rjd-link { margin-right: auto; font-size: 13px; color: #3370ff; text-decoration: none; }
 
 /* 窄屏：实时预览让位，编辑区全宽 */
 @media (max-width: 1100px) {

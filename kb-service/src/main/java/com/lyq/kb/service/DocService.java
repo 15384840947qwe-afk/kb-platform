@@ -28,4 +28,7 @@ public interface DocService {
      * onDone回调完整答案；AI不可用时流式给出固定提示，不报错
      */
     void ask(Long id, DocAskRequest req, Consumer<String> onDelta, Consumer<String> onDone);
+
+    /** 管理员一键重建全部已审核文档的向量索引（存量回填用），后台异步执行，仅管理员 */
+    String reindexAll();
 }

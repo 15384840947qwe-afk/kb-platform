@@ -4,6 +4,7 @@ import com.lyq.kb.dto.ResumeGenerateRequest;
 import com.lyq.kb.dto.ResumeImportVO;
 import com.lyq.kb.dto.ResumeJdRequest;
 import com.lyq.kb.dto.ResumeSaveRequest;
+import com.lyq.kb.entity.Job;
 import com.lyq.kb.entity.Resume;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -45,4 +46,36 @@ public interface ResumeService {
 
     /** contentJson渲染成Markdown文本，前端复制/打印成PDF */
     String exportMarkdown(Long id);
+
+    // ===== 提交给管理员 / 管理员审阅 =====
+
+    /** 提交给管理员审阅：重算公共字段，可附意向岗位 */
+    void submit(Long id, Long jobId);
+
+    /** 撤回提交：仅待审阅状态可撤 */
+    void withdraw(Long id);
+
+    /** 管理员：简历分页，可按提交状态/学历/姓名目标岗位关键词筛选 */
+    Map<String, Object> adminPage(Integer submitStatus, String education, String keyword, long page, long size);
+
+    /** 管理员：简历详情（含contentJson全文） */
+    Resume adminDetail(Long id);
+
+    /** 管理员：给简历推荐岗位（可多次追加，重复推同一个自动忽略） */
+    void assign(Long id, Long jobId);
+
+    /** 管理员：撤销某个已推荐的岗位；全部撤完回到待审阅 */
+    void unassign(Long id, Long jobId);
+
+    /** 管理员：查某简历已推荐的岗位完整列表 */
+    List<Job> adminRecommendedJobs(Long id);
+
+    /** 用户：查自己简历被推荐的岗位完整列表 */
+    List<Job> recommendedJobs(Long id);
+
+    /** 管理员：退回简历并附理由 */
+    void sendBack(Long id, String remark);
+
+    /** 管理员：统计总览（提交/推荐数、学历城市分布、AI均分） */
+    Map<String, Object> adminStats();
 }

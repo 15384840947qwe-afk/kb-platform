@@ -17,6 +17,6 @@ public interface QuestionService {
 
     void delete(Long id);
 
-    /** AI从教材文档生成3道题（单选/填空/简答），自动关联回该文档 */
-    List<Question> generateFromDoc(Long docId);
+    /** AI从教材文档生成练习题（count可选3/6/9），自动关联回该文档，仅管理员 */
+    List<Question> generateFromDoc(Long docId, int count);
 }

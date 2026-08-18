@@ -6,6 +6,8 @@ import Manage from './views/Manage.vue'
 import Interview from './views/Interview.vue'
 import Stats from './views/Stats.vue'
 import Resume from './views/Resume.vue'
+import JobManage from './views/JobManage.vue'
+import ResumeReview from './views/ResumeReview.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -16,7 +18,9 @@ const router = createRouter({
     { path: '/manage', component: Manage },
     { path: '/interview', component: Interview },
     { path: '/stats', component: Stats },
-    { path: '/resume', component: Resume }
+    { path: '/resume', component: Resume },
+    { path: '/jobs', component: JobManage },
+    { path: '/resumes', component: ResumeReview }
   ]
 })
 

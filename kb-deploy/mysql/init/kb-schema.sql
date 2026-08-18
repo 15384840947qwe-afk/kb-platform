@@ -53,6 +53,19 @@ CREATE TABLE `t_doc` (
   KEY `idx_kb` (`kb_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=6604 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='文档表';
 /*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `t_doc_chunk`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+CREATE TABLE `t_doc_chunk` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `doc_id` bigint NOT NULL COMMENT '文档ID',
+  `seq` int NOT NULL COMMENT '块序号',
+  `content` text NOT NULL COMMENT '块文本约400字',
+  `embedding` mediumtext COMMENT '向量JSON数组，embedding不可用时为空',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_doc` (`doc_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='文档向量块：RAG检索用，保存文档时重建';
+/*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `t_file`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;

@@ -13,6 +13,11 @@
         <el-button v-if="status === 3 || status === 2" type="success" size="small" @click="submit">
           提交审核
         </el-button>
+        <el-select v-if="isAdmin" v-model="genCount" size="small" style="width: 92px" title="一次出几道题">
+          <el-option :value="3" label="出3道" />
+          <el-option :value="6" label="出6道" />
+          <el-option :value="9" label="出9道" />
+        </el-select>
         <el-button v-if="isAdmin" size="small" :loading="generating" @click="generate">
           生成练习题
         </el-button>
@@ -87,6 +92,8 @@ const status = ref(1)
 const user = JSON.parse(localStorage.getItem('kb-user') || '{"role":""}')
 const isAdmin = computed(() => user.role === 'ADMIN')
 const generating = ref(false)
+// 一次出几道题：3/6/9三档，后端按题型配比拆
+const genCount = ref(3)
 const saving = ref(false)
 const saved = ref(true)
 const attachments = ref([])
@@ -154,7 +161,7 @@ async function submit() {
 async function generate() {
   generating.value = true
   try {
-    const list = await http.post(`/question/generate?docId=${props.docId}`)
+    const list = await http.post(`/question/generate?docId=${props.docId}&count=${genCount.value}`)
     ElMessage.success(`已生成${list.length}道练习题，去刷题页试试，答错能跳回本篇教材`)
   } finally {
     generating.value = false
