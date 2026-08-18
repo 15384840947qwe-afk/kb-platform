@@ -176,12 +176,38 @@ CREATE TABLE `t_resume` (
   `content_json` mediumtext COMMENT '结构化简历JSON',
   `analysis_json` text COMMENT '最近一次AI分析结果JSON',
   `file_name` varchar(255) DEFAULT NULL COMMENT '导入的原始文件名',
+  `name` varchar(50) DEFAULT NULL COMMENT '姓名，拍平自content_json.basics.name',
+  `phone` varchar(30) DEFAULT NULL COMMENT '电话，拍平自basics.phone',
+  `city` varchar(50) DEFAULT NULL COMMENT '城市，拍平自basics.city',
+  `education` varchar(20) DEFAULT NULL COMMENT '最高学历：博士/硕士/本科/大专/其他',
+  `work_years` int DEFAULT NULL COMMENT '工作年限，按工作经历最早开始年份估算',
+  `skills` varchar(500) DEFAULT NULL COMMENT '技能摘要，分类:项目 顿号拼接',
+  `ai_score` int DEFAULT NULL COMMENT '最近一次AI分析得分',
+  `submit_status` tinyint NOT NULL DEFAULT '0' COMMENT '0未提交 1待审阅 2已驳回 3已推荐',
+  `submit_time` datetime DEFAULT NULL COMMENT '最近提交时间',
+  `applied_job_id` bigint DEFAULT NULL COMMENT '提交时意向岗位(t_job.id)，可空',
+  `assigned_job_id` bigint DEFAULT NULL COMMENT '管理员推荐岗位(t_job.id)，可空',
+  `remark` varchar(255) DEFAULT NULL COMMENT '管理员退回理由等备注',
   `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
   `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  KEY `idx_user` (`user_id`)
+  KEY `idx_user` (`user_id`),
+  KEY `idx_submit` (`submit_status`),
+  KEY `idx_assigned` (`assigned_job_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='简历';
 /*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `t_resume_job`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `t_resume_job` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `resume_id` bigint NOT NULL COMMENT '简历ID',
+  `job_id` bigint NOT NULL COMMENT '岗位ID',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '推荐时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_resume_job` (`resume_id`,`job_id`),
+  KEY `idx_job` (`job_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='简历推荐岗位关系：一份简历可被推荐多个岗位，支持追加';
 DROP TABLE IF EXISTS `t_user`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
