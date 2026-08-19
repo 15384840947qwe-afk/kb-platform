@@ -91,6 +91,32 @@ $env:AI_API_KEY = "sk-你的硅基流动密钥"   # 仅当前窗口有效；永�
 | kb-service / kb-gateway 后端 | 停掉重跑 `.\mvnw.cmd spring-boot:run`（IDEA 里点重启更快） |
 | mysql/init 下的建表 SQL | 方式 A：`docker compose down -v` 后重新 up（会重建库）；方式 B：手动重新执行 SQL |
 
+## MinIO 数据导入（文档图片）
+
+项目中的文档图片存储在 MinIO 对象存储中，不在数据库里。协作者全新部署时 MinIO 是空的，文档中的图片会无法加载。
+
+**导入步骤**：
+
+1. 从网盘下载 `kb-minio-data.zip`（约 736 MB，链接找项目维护者要）
+2. 解压到 `kb-deploy/minio-export/` 目录，得到 `kb-files` 文件夹
+3. 确保 MinIO 已启动，在控制台（http://localhost:9101）创建 bucket `kb-files`
+4. 运行导入脚本：
+   ```powershell
+   cd kb-deploy/minio-export
+   .\import.ps1
+   ```
+5. 按提示安装 mc（MinIO 客户端）并执行导入命令
+6. 重启 kb-service，文档图片即可正常加载
+
+**维护者导出方法**：
+
+```powershell
+docker cp minio:/data/kb-files .\kb-deploy\minio-export\kb-files
+Compress-Archive -Path .\kb-deploy\minio-export\kb-files -DestinationPath kb-minio-data.zip
+```
+
+然后上传网盘分享。注意 `kb-deploy/.gitignore` 已排除 `minio-export/kb-files/`，不会误提交到 GitHub。
+
 ## 常见问题
 
 - **kb-service 启动报 9848/8848 连不上**：Nacos 没起，先起 Nacos 再起后端
