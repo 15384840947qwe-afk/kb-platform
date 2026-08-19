@@ -4,8 +4,67 @@
     <div v-if="phase === 'setup'" class="iv-center">
       <div class="iv-card">
         <h2>AI 模拟面试</h2>
-        <p class="iv-sub">面试官逐题提问、追问、点评，终场出总评报告</p>
+        <p class="iv-sub">简历审核 → 着装评估 → 面试官针对简历提问 → 终场总评</p>
         <el-form label-position="top">
+          <!-- 简历选择 -->
+          <el-form-item label="选择简历">
+            <el-select v-model="resumeId" placeholder="不选简历 = 题库出题" clearable style="width: 100%"
+                       @change="onResumeChange">
+              <el-option v-for="r in resumes" :key="r.id" :label="resumeLabel(r)" :value="r.id" />
+            </el-select>
+          </el-form-item>
+
+          <!-- 简历审核 -->
+          <div v-if="resumeId" class="iv-section">
+            <div class="iv-section-head">
+              <span>简历审核</span>
+              <el-button size="small" :loading="reviewLoading" :disabled="!!reviewResult"
+                         @click="doReviewResume">
+                {{ reviewResult ? '已审核' : 'AI 审核简历' }}
+              </el-button>
+            </div>
+            <!-- 审核流式文本 -->
+            <div v-if="reviewText" :class="['review-text', { streaming: reviewStreaming }]">{{ reviewText }}</div>
+            <!-- 审核结构化结果 -->
+            <div v-if="reviewResult" class="review-cards">
+              <div v-if="reviewResult.highlights && reviewResult.highlights.length" class="review-card good">
+                <h5>亮点</h5>
+                <li v-for="s in reviewResult.highlights" :key="s">{{ s }}</li>
+              </div>
+              <div v-if="reviewResult.concerns && reviewResult.concerns.length" class="review-card warn">
+                <h5>疑虑</h5>
+                <li v-for="s in reviewResult.concerns" :key="s">{{ s }}</li>
+              </div>
+              <div v-if="reviewResult.suggestions && reviewResult.suggestions.length" class="review-card tip">
+                <h5>考察方向</h5>
+                <li v-for="s in reviewResult.suggestions" :key="s">{{ s }}</li>
+              </div>
+            </div>
+          </div>
+
+          <!-- 着装评估 -->
+          <div class="iv-section">
+            <div class="iv-section-head">
+              <span>着装评估</span>
+              <el-button size="small" :loading="appearLoading" :disabled="!!appearResult"
+                         @click="doEvalAppearance">
+                {{ appearResult ? '已评估' : '评估着装' }}
+              </el-button>
+            </div>
+            <el-input v-if="!appearResult" v-model="outfitDesc" type="textarea" :rows="2"
+                      placeholder="描述你的面试着装，如：白色衬衫、深色西裤、黑色皮鞋" />
+            <div v-if="appearResult" class="appear-result">
+              <div class="appear-score">
+                <span class="appear-num">{{ appearResult.formalityScore }}</span>
+                <span class="appear-label">/ 10 正式度</span>
+              </div>
+              <p class="appear-comment">{{ appearResult.comment }}</p>
+              <div v-if="appearResult.good" class="appear-good">✓ {{ appearResult.good }}</div>
+              <div v-if="appearResult.improve" class="appear-improve">→ {{ appearResult.improve }}</div>
+            </div>
+          </div>
+
+          <!-- 原有设置 -->
           <el-form-item label="科目">
             <el-select v-model="category" placeholder="混合出题" clearable style="width: 100%">
               <el-option v-for="c in categories" :key="c" :label="c" :value="c" />
@@ -29,7 +88,6 @@
               <div v-for="a in avatarOpts" :key="a.v"
                    :class="['avatar-opt', { on: avatar === a.v }]" @click="avatar = a.v">
                 <div class="avatar-thumb">
-                  <!-- @error兜底：图片丢了就退回SVG卡通形象，不会出现裂图 -->
                   <img :src="a.img" :alt="a.label" @error="onThumbError(a)" />
                   <InterviewerAvatar v-if="a.broken" :variant="a.v" />
                 </div>
@@ -38,7 +96,9 @@
             </div>
           </el-form-item>
         </el-form>
-        <el-button type="primary" size="large" class="iv-big" @click="startInterview">开始面试</el-button>
+        <el-button type="primary" size="large" class="iv-big" @click="startInterview">
+          {{ resumeId ? '基于简历开始面试' : '开始面试' }}
+        </el-button>
         <el-button size="large" class="iv-big" @click="openList">面试记录（{{ records.length }}）</el-button>
         <el-button link @click="$router.push('/')">返回</el-button>
       </div>
@@ -48,35 +108,30 @@
     <div v-else-if="phase === 'chat'" class="iv-chat">
       <header class="iv-top">
         <a class="quit" @click="quitChat">×</a>
-        <span class="iv-title">AI 面试官 · {{ category || '混合' }}</span>
+        <span class="iv-title">AI 面试官 · {{ resumeId ? '简历面试' : (category || '混合') }}</span>
         <el-switch v-model="voiceOn" active-text="语音" size="small" />
         <span class="iv-count">题 {{ Math.min(qIdx + 1, questions.length) }}/{{ questions.length }}</span>
       </header>
 
-      <!-- 面对面"视频通话"区：真人感形象图，照片自带虚化办公室背景，不再叠加假背景 -->
+      <!-- 面对面"视频通话"区 -->
       <div class="iv-stage">
         <div :class="['iv-video', { speaking, listening, thinking: sending }]">
-          <!-- 面试官形象：写实照片，外层叠加呼吸/点头/侧倾动效 -->
           <div class="iv-figure">
             <img :src="avatarImg" :key="avatar" alt="AI 面试官" draggable="false" @error="onStageImgError" />
             <InterviewerAvatar v-if="avatarBroken" class="iv-fallback" :speaking="speaking"
                                :listening="listening" :thinking="sending" :variant="avatar" />
           </div>
-          <!-- 电影质感：噪点 + 暗角 -->
           <div class="iv-grain"></div>
           <div class="iv-vignette"></div>
 
-          <!-- 铭牌（含通话计时）/ 状态提示 -->
           <div class="iv-badge"><i class="badge-dot"></i>AI 面试官 · {{ timerText }}</div>
           <div class="iv-status">{{ statusText }}</div>
 
-          <!-- 你的小窗：点击可开真实摄像头 -->
           <div class="self-view" @click="toggleCam" :title="camOn ? '关闭摄像头' : '打开摄像头（试试）'">
             <video v-if="camOn" ref="camVideo" muted playsinline></video>
             <span v-else>你<i class="cam-hint">点开摄像头</i></span>
           </div>
 
-          <!-- 实时字幕：说话时前面带声波动画 -->
           <div v-if="lastAiText" class="iv-caption">
             <span v-if="speaking" class="iv-wave"><i></i><i></i><i></i><i></i><i></i></span>
             <span class="iv-caption-text">{{ lastAiText }}</span>
@@ -89,7 +144,6 @@
           <span v-if="m.role === 'ai'" class="msg-avatar">AI</span>
           <div :class="['bubble', { streaming: m.streaming }]">{{ m.text }}</div>
         </div>
-        <!-- AI不可用降级自评 -->
         <div v-if="selfEvalRef" class="msg ai">
           <div class="bubble selfeval">
             AI 暂不可用，对照参考答案自评：
@@ -125,6 +179,26 @@
         <h2>面试总评</h2>
         <p class="iv-score">{{ report.score ?? '…' }} 分</p>
         <p :class="['iv-sub', { streaming: reportStreaming }]">{{ report.summary }}</p>
+
+        <!-- 简历审核回顾 -->
+        <div v-if="reviewResult" class="iv-cols">
+          <div v-if="reviewResult.highlights && reviewResult.highlights.length">
+            <h4>简历亮点</h4>
+            <li v-for="s in reviewResult.highlights" :key="s">{{ s }}</li>
+          </div>
+          <div v-if="reviewResult.concerns && reviewResult.concerns.length">
+            <h4>简历疑虑</h4>
+            <li v-for="s in reviewResult.concerns" :key="s">{{ s }}</li>
+          </div>
+        </div>
+
+        <!-- 着装评估回顾 -->
+        <div v-if="appearResult" class="iv-appear-recap">
+          <h4>着装评估</h4>
+          <span class="appear-num-sm">{{ appearResult.formalityScore }}/10</span>
+          <span>{{ appearResult.comment }}</span>
+        </div>
+
         <div class="iv-cols">
           <div v-if="report.strengths && report.strengths.length">
             <h4>强项</h4>
@@ -140,13 +214,14 @@
           <li v-for="s in report.suggestions" :key="s">{{ s }}</li>
         </div>
         <h4 class="iv-review-h">逐题回顾</h4>
-        <div v-for="it in items" :key="it.questionId" class="review-item">
+        <div v-for="it in items" :key="it.questionId || it.stem" class="review-item">
           <span :class="['dot', it.pass ? 'ok' : 'bad']"></span>
           <span class="review-stem">{{ it.stem }}</span>
+          <span v-if="it.score != null" :class="['review-score', it.score >= 70 ? 'good' : it.score >= 50 ? 'mid' : 'low']">{{ it.score }}分</span>
           <a v-if="!it.pass && it.relatedDocId" class="review-link" @click="goDoc(it.relatedDocId)">看教材</a>
           <a v-if="!it.pass" class="review-link" @click="toWrong(it)">进错题本</a>
         </div>
-        <el-button type="primary" size="large" class="iv-big" @click="phase = 'setup'">再来一场</el-button>
+        <el-button type="primary" size="large" class="iv-big" @click="resetToSetup">再来一场</el-button>
         <el-button size="large" @click="openList">看记录</el-button>
       </div>
     </div>
@@ -160,6 +235,7 @@
           <div class="rec-main">
             <span class="rec-cat">{{ r.category }}</span>
             <span class="rec-score">{{ r.score }} 分</span>
+            <span v-if="r.resumeId" class="rec-badge">简历面试</span>
           </div>
           <div class="rec-time">{{ (r.createTime || '').replace('T', ' ').slice(0, 16) }}</div>
         </div>
@@ -197,13 +273,11 @@ const { voiceOn, speaking, listening, asrSupported, speak, listen, stopListen } 
 const categories = ref([])
 const records = ref([])
 
-// setup
+// ===== setup =====
 const category = ref('')
 const count = ref(3)
 const maxFollow = ref(1)
 const avatar = ref('m')
-// 面试官形象写真图（放public/，Vite原样发布到站点根路径）；
-// 加时间戳是为了浏览器缓存：同名文件被覆盖后仍能拿到新图
 const _v = '?v=' + Date.now()
 const avatarOpts = [
   { v: 'm', label: '男面试官', img: '/interviewer-m.png' + _v, broken: false },
@@ -212,12 +286,24 @@ const avatarOpts = [
 const avatarBroken = ref(false)
 const avatarImg = computed(() => (avatarOpts.find(a => a.v === avatar.value) || avatarOpts[0]).img)
 watch(avatar, () => { avatarBroken.value = false })
-/** 视频区主图加载失败 → 退回SVG动画形象，页面不留白 */
 function onStageImgError() { avatarBroken.value = true }
-/** 选择器缩略图加载失败 → 该项显示SVG形象 */
 function onThumbError(a) { a.broken = true }
 
-// 通话计时
+// ===== 简历 =====
+const resumes = ref([])
+const resumeId = ref(null)
+const reviewText = ref('')
+const reviewStreaming = ref(false)
+const reviewLoading = ref(false)
+const reviewResult = ref(null)
+let reviewCtrl = null
+
+// ===== 着装 =====
+const outfitDesc = ref('')
+const appearLoading = ref(false)
+const appearResult = ref(null)
+
+// ===== 通话计时 =====
 const elapsed = ref(0)
 let timer = null
 const timerText = computed(() => {
@@ -225,17 +311,10 @@ const timerText = computed(() => {
   const s = String(elapsed.value % 60).padStart(2, '0')
   return `${m}:${s}`
 })
-function startTimer() {
-  stopTimer()
-  elapsed.value = 0
-  timer = setInterval(() => elapsed.value++, 1000)
-}
-function stopTimer() {
-  if (timer) clearInterval(timer)
-  timer = null
-}
+function startTimer() { stopTimer(); elapsed.value = 0; timer = setInterval(() => elapsed.value++, 1000) }
+function stopTimer() { if (timer) clearInterval(timer); timer = null }
 
-// 本地摄像头（"我"的小窗）
+// ===== 本地摄像头 =====
 const camOn = ref(false)
 const camVideo = ref(null)
 let camStream = null
@@ -245,21 +324,17 @@ async function toggleCam() {
     camStream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 } })
     camOn.value = true
     await nextTick()
-    if (camVideo.value) {
-      camVideo.value.srcObject = camStream
-      camVideo.value.play()
-    }
+    if (camVideo.value) { camVideo.value.srcObject = camStream; camVideo.value.play() }
   } catch {
-    ElMessage.warning('摄像头打不开：请检查权限，或用 localhost 访问（局域网IP下浏览器禁止摄像头）')
+    ElMessage.warning('摄像头打不开：请检查权限，或用 localhost 访问')
   }
 }
 function stopCam() {
   if (camStream) camStream.getTracks().forEach(t => t.stop())
-  camStream = null
-  camOn.value = false
+  camStream = null; camOn.value = false
 }
 
-// chat
+// ===== chat =====
 const phase = ref('setup')
 const questions = ref([])
 const qIdx = ref(0)
@@ -267,18 +342,18 @@ const followUsed = ref(0)
 const messages = ref([])
 const input = ref('')
 const sending = ref(false)
-const selfEvalRef = ref(null)   // 非null时显示自评面板，值为参考答案
+const selfEvalRef = ref(null)
 const items = ref([])
 const chatBody = ref(null)
 
-// report / detail
+// ===== report / detail =====
 const report = ref({})
-const reportStreaming = ref(false)  // 总评summary流式上屏中
+const reportStreaming = ref(false)
 const detail = ref({})
 const detailTranscript = ref([])
 const detailReport = ref({})
 
-// 字幕：面试官最近说的一句话
+// 字幕
 const lastAiText = computed(() => {
   for (let i = messages.value.length - 1; i >= 0; i--) {
     if (messages.value[i].role === 'ai') return messages.value[i].text
@@ -286,7 +361,6 @@ const lastAiText = computed(() => {
   return ''
 })
 
-// 视频通话区的状态提示
 const statusText = computed(() => {
   if (sending.value) return '面试官思考中…'
   if (speaking.value) return '面试官正在讲话…'
@@ -296,19 +370,82 @@ const statusText = computed(() => {
 
 onMounted(async () => {
   categories.value = await http.get('/drill/categories')
+  loadResumes()
 })
 
-// 流式请求句柄：退出/卸载时打断
 let evalCtrl = null
 let reportCtrl = null
 
 onUnmounted(() => {
-  stopCam()
-  stopTimer()
-  evalCtrl?.abort()
-  reportCtrl?.abort()
+  stopCam(); stopTimer()
+  evalCtrl?.abort(); reportCtrl?.abort(); reviewCtrl?.abort()
 })
 
+// ===== 简历列表 =====
+async function loadResumes() {
+  try {
+    resumes.value = await http.get('/interview/my-resumes')
+  } catch { resumes.value = [] }
+}
+
+function resumeLabel(r) {
+  const parts = [r.title || '未命名简历']
+  if (r.targetJob) parts.push(r.targetJob)
+  return parts.join(' · ')
+}
+
+function onResumeChange() {
+  // 换简历时清掉之前的审核结果
+  reviewText.value = ''
+  reviewResult.value = null
+  reviewStreaming.value = false
+}
+
+// ===== 简历审核（流式） =====
+function doReviewResume() {
+  if (!resumeId.value) return
+  reviewLoading.value = true
+  reviewText.value = ''
+  reviewResult.value = null
+  reviewStreaming.value = true
+
+  reviewCtrl = streamPost(`/interview/review-resume-stream?resumeId=${resumeId.value}`, {}, {
+    onDelta: d => {
+      reviewText.value += d
+      reviewStreaming.value = true
+    },
+    onDone: vo => {
+      reviewStreaming.value = false
+      reviewLoading.value = false
+      reviewResult.value = vo
+    },
+    onError: () => {
+      reviewStreaming.value = false
+      reviewLoading.value = false
+      if (!reviewText.value) ElMessage.error('简历审核服务异常')
+    }
+  })
+}
+
+// ===== 着装评估 =====
+async function doEvalAppearance() {
+  if (!outfitDesc.value.trim()) {
+    ElMessage.warning('请先描述你的着装')
+    return
+  }
+  appearLoading.value = true
+  try {
+    appearResult.value = await http.post('/interview/evaluate-appearance', {
+      outfitDescription: outfitDesc.value
+    })
+  } catch {
+    ElMessage.error('着装评估失败')
+  } finally {
+    appearLoading.value = false
+  }
+}
+
+// ===== 面试流程 =====
 async function openList() {
   records.value = await http.get('/interview/list')
   phase.value = 'list'
@@ -316,7 +453,10 @@ async function openList() {
 
 async function startInterview() {
   const list = await http.post('/interview/start', {
-    category: category.value, count: count.value, maxFollow: maxFollow.value
+    resumeId: resumeId.value,
+    category: category.value,
+    count: count.value,
+    maxFollow: maxFollow.value
   })
   if (!list.length) {
     ElMessage.warning('该科目题库暂无题，换个科目吧')
@@ -328,17 +468,29 @@ async function startInterview() {
   items.value = []
   messages.value = []
   selfEvalRef.value = null
+
+  // 简历面试模式：开场白不同
+  if (resumeId.value) {
+    const r = resumes.value.find(x => x.id === resumeId.value)
+    const name = r?.name || '候选人'
+    messages.value.push({
+      role: 'ai',
+      text: `${name}你好，我是今天的面试官。我已经看过你的简历了，接下来我会针对你的经历提几个问题，准备好了吗？我们开始吧。`
+    })
+  }
+
   askCurrent()
   phase.value = 'chat'
-  startTimer() // 开始通话计时
+  startTimer()
 }
 
-/** 中途退出：关摄像头、停计时、打断进行中的流式请求 */
+function resetToSetup() {
+  phase.value = 'setup'
+  // 保留简历/着装/审核结果，方便用户对比
+}
+
 function quitChat() {
-  evalCtrl?.abort()
-  stopCam()
-  stopTimer()
-  stopListen()
+  evalCtrl?.abort(); stopCam(); stopTimer(); stopListen()
   phase.value = 'setup'
 }
 
@@ -350,26 +502,22 @@ function askCurrent() {
   scroll()
 }
 
-/** 语音作答：点一下开始听写、再点一下停止，识别结果实时填进输入框，说完自己确认发送 */
 function toggleMic() {
-  if (listening.value) {
-    stopListen() // 正在听写 → 手动停止，时长由用户决定
-    return
-  }
+  if (listening.value) { stopListen(); return }
   const ok = listen(
     t => (input.value = t),
     () => {},
     err => {
       if (err === 'not-allowed' || err === 'service-not-allowed') {
-        ElMessage.warning('麦克风权限被拒，请在浏览器设置里允许后重试')
+        ElMessage.warning('麦克风权限被拒')
       } else if (err === 'network') {
-        ElMessage.warning('语音识别服务网络不通，请用打字作答')
+        ElMessage.warning('语音识别网络不通')
       } else {
-        ElMessage.warning('语音识别不可用，请用打字作答')
+        ElMessage.warning('语音识别不可用')
       }
     }
   )
-  if (!ok) ElMessage.warning('当前浏览器不支持语音识别，请用打字作答')
+  if (!ok) ElMessage.warning('当前浏览器不支持语音识别')
 }
 
 async function scroll() {
@@ -377,14 +525,12 @@ async function scroll() {
   chatBody.value?.scrollTo({ top: chatBody.value.scrollHeight, behavior: 'smooth' })
 }
 
-/** 本题对话线程：从最近一条“第X题”主问题开始到当前回答，给AI上下文避免重复追问 */
 function currentThread() {
   const ms = messages.value
   let start = 0
   for (let i = ms.length - 1; i >= 0; i--) {
     if (ms[i].role === 'ai' && !ms[i].streaming && ms[i].text.startsWith(`第 ${qIdx.value + 1} 题：`)) {
-      start = i
-      break
+      start = i; break
     }
   }
   return ms.slice(start)
@@ -400,20 +546,32 @@ function send() {
   scroll()
   sending.value = true
   const q = questions.value[qIdx.value]
-  // 点评气泡先占位，delta增量往里追，打字机式上屏
+
+  // 构造请求：区分题库模式和简历模式
+  const evalReq = {
+    followUsed: followUsed.value,
+    maxFollow: maxFollow.value,
+    history: currentThread()
+  }
+  if (q.id) {
+    // 题库模式
+    evalReq.questionId = q.id
+  } else {
+    // 简历模式：传题目和参考答案
+    evalReq.stem = q.stem
+    evalReq.referenceAnswer = q.referenceAnswer
+    evalReq.resumeId = resumeId.value
+  }
+
   const bubble = { role: 'ai', text: '', streaming: true }
   let gotDelta = false
-  evalCtrl = streamPost('/interview/evaluate-stream', {
-    questionId: q.id, answer: text, followUsed: followUsed.value,
-    maxFollow: maxFollow.value, history: currentThread()
-  }, {
+  evalCtrl = streamPost('/interview/evaluate-stream', evalReq, {
     onDelta: d => {
       gotDelta = true
       bubble.text += d
       scroll()
     },
     onFallback: vo => {
-      // AI完全不可用：气泡撤掉，降级自评面板
       messages.value = messages.value.filter(m => m !== bubble)
       selfEvalRef.value = vo.reference
       sending.value = false
@@ -423,20 +581,25 @@ function send() {
       bubble.streaming = false
       sending.value = false
       if (vo.pass === null) {
-        // 流到了但格式异常：同样降级自评（已流出的点评保留）
         selfEvalRef.value = vo.reference
         scroll()
         return
       }
-      if (!gotDelta && vo.comment) bubble.text = vo.comment
+      // 在点评文本后追加得分标签
+      const scoreText = vo.score != null ? `  【${vo.score}分】` : ''
+      if (!gotDelta && vo.comment) bubble.text = vo.comment + scoreText
+      else if (scoreText) bubble.text += scoreText
       if (vo.followUp) {
         messages.value.push({ role: 'ai', text: `追问：${vo.followUp}` })
         followUsed.value++
-        if (!items.value.find(x => x.questionId === q.id)) {
-          items.value.push({ questionId: q.id, stem: q.stem, pass: vo.pass, comment: vo.comment || bubble.text, relatedDocId: q.relatedDocId, pending: true })
+        if (!items.value.find(x => (x.questionId || x.stem) === (q.id || q.stem))) {
+          items.value.push({
+            questionId: q.id, stem: q.stem, pass: vo.pass, score: vo.score,
+            comment: vo.comment || bubble.text, relatedDocId: q.relatedDocId, pending: true
+          })
         }
       } else {
-        finalizeQuestion(vo.pass, vo.comment || bubble.text)
+        finalizeQuestion(vo.pass, vo.score, vo.comment || bubble.text)
       }
       const say = [bubble.text, vo.followUp ? `追问：${vo.followUp}` : ''].filter(Boolean).join(' ')
       if (say) speak(say)
@@ -451,25 +614,22 @@ function send() {
   })
 }
 
-/** 自评面板结果 */
 function selfEval(pass) {
   selfEvalRef.value = null
-  finalizeQuestion(pass, '（自评）')
+  finalizeQuestion(pass, null, '（自评）')
   scroll()
 }
 
-function finalizeQuestion(pass, comment) {
+function finalizeQuestion(pass, score, comment) {
   const q = questions.value[qIdx.value]
-  const exist = items.value.find(x => x.questionId === q.id)
+  const key = q.id || q.stem
+  const exist = items.value.find(x => (x.questionId || x.stem) === key)
   if (exist) {
-    exist.pass = pass
-    exist.comment = comment
-    delete exist.pending
+    exist.pass = pass; exist.score = score; exist.comment = comment; delete exist.pending
   } else {
-    items.value.push({ questionId: q.id, stem: q.stem, pass, comment, relatedDocId: q.relatedDocId })
+    items.value.push({ questionId: q.id, stem: q.stem, pass, score, comment, relatedDocId: q.relatedDocId })
   }
-  qIdx.value++
-  followUsed.value = 0
+  qIdx.value++; followUsed.value = 0
   if (qIdx.value < questions.value.length) {
     askCurrent()
   } else {
@@ -478,14 +638,31 @@ function finalizeQuestion(pass, comment) {
 }
 
 function finish() {
-  stopTimer()
-  stopCam()
-  const reportReq = {
-    category: category.value || '混合',
-    transcript: JSON.stringify(messages.value),
-    items: items.value.map(({ pending, ...rest }) => rest)
+  stopTimer(); stopCam()
+
+  // 构造简历审核/着装评估摘要文本
+  let resumeReviewText = null
+  if (reviewResult.value) {
+    const rr = reviewResult.value
+    resumeReviewText = [
+      rr.highlights?.length ? '亮点：' + rr.highlights.join('、') : '',
+      rr.concerns?.length ? '疑虑：' + rr.concerns.join('、') : '',
+      rr.suggestions?.length ? '考察方向：' + rr.suggestions.join('、') : ''
+    ].filter(Boolean).join('；')
   }
-  // 报告页先上：summary流式打字，done后填充分数/强弱势
+  let appearanceEvalText = null
+  if (appearResult.value) {
+    appearanceEvalText = `正式度${appearResult.value.formalityScore}/10，${appearResult.value.comment}`
+  }
+
+  const reportReq = {
+    category: resumeId.value ? '简历面试' : (category.value || '混合'),
+    transcript: JSON.stringify(messages.value),
+    items: items.value.map(({ pending, ...rest }) => rest),
+    resumeReview: resumeReviewText,
+    appearanceEval: appearanceEvalText
+  }
+
   phase.value = 'report'
   report.value = { summary: '' }
   reportStreaming.value = true
@@ -499,15 +676,15 @@ function finish() {
     onError: () => {
       reportStreaming.value = false
       if (!report.value.summary) {
-        ElMessage.error('总评服务异常，请重新结束本场')
+        ElMessage.error('总评服务异常')
         phase.value = 'chat'
       }
     }
   })
 }
 
-/** 未通过的题塞进错题本 */
 async function toWrong(it) {
+  if (!it.questionId) { ElMessage.info('简历面试题暂不支持错题本'); return }
   await http.post('/drill/record', { questionId: it.questionId, result: 0 })
   ElMessage.success('已加入错题本')
 }
@@ -530,7 +707,7 @@ async function openDetail(id) {
 
 .iv-center { flex: 1; display: flex; align-items: center; justify-content: center; padding: 20px; }
 .iv-card {
-  width: 100%; max-width: 460px; background: #fff; border: 1px solid var(--kb-line);
+  width: 100%; max-width: 520px; background: #fff; border: 1px solid var(--kb-line);
   border-radius: var(--kb-radius); padding: 26px 24px; text-align: center;
   box-shadow: var(--kb-shadow-md);
 }
@@ -548,16 +725,69 @@ async function openDetail(id) {
 .dot.ok { background: #00b96b; }
 .dot.bad { background: #f56c6c; }
 .review-stem { flex: 1; min-width: 0; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+.review-score {
+  font-size: 12px; font-weight: 700; padding: 1px 7px; border-radius: 10px; flex-shrink: 0;
+}
+.review-score.good { background: #e6f7ef; color: #00b96b; }
+.review-score.mid { background: #fef3e2; color: #e6a23c; }
+.review-score.low { background: #fef0f0; color: #f56c6c; }
 .review-link { color: #00b96b; cursor: pointer; flex-shrink: 0; }
 .rec-item { padding: 10px 8px; border-radius: 8px; cursor: pointer; }
 .rec-item:hover { background: var(--kb-side-hover); }
-.rec-main { display: flex; justify-content: space-between; font-size: 14px; }
+.rec-main { display: flex; justify-content: space-between; font-size: 14px; align-items: center; }
 .rec-score { color: #00b96b; font-weight: 600; }
+.rec-badge { font-size: 11px; background: #e6f7ef; color: #00b96b; padding: 1px 6px; border-radius: 8px; }
 .rec-time { font-size: 12px; color: var(--kb-ink-3); margin-top: 2px; }
+
+/* ===== setup 分区 ===== */
+.iv-section {
+  border: 1px solid var(--kb-line); border-radius: 10px;
+  padding: 12px 14px; margin-bottom: 14px; text-align: left;
+}
+.iv-section-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px; font-size: 14px; font-weight: 600; color: var(--kb-ink);
+}
+/* 简历审核文本 */
+.review-text { font-size: 13px; color: var(--kb-ink-2); line-height: 1.7; white-space: pre-wrap; margin-bottom: 8px; }
+.review-text.streaming::after {
+  content: ''; display: inline-block; width: 2px; height: 1em;
+  margin-left: 2px; vertical-align: -2px; background: currentColor;
+  animation: iv-cursor 0.9s steps(2) infinite;
+}
+@keyframes iv-cursor { 50% { opacity: 0; } }
+/* 审核结果卡片 */
+.review-cards { display: flex; gap: 8px; flex-wrap: wrap; }
+.review-card {
+  flex: 1; min-width: 120px; border-radius: 8px; padding: 8px 10px; font-size: 12px;
+}
+.review-card h5 { margin: 0 0 4px; font-size: 12px; }
+.review-card li { margin: 0 0 2px 12px; line-height: 1.5; }
+.review-card.good { background: #e6f7ef; }
+.review-card.good h5 { color: #00b96b; }
+.review-card.warn { background: #fef3e2; }
+.review-card.warn h5 { color: #e6a23c; }
+.review-card.tip { background: #ecf5ff; }
+.review-card.tip h5 { color: #409eff; }
+
+/* 着装评估 */
+.appear-result { text-align: left; }
+.appear-score { display: flex; align-items: baseline; gap: 6px; margin-bottom: 4px; }
+.appear-num { font-size: 32px; font-weight: 700; color: #00b96b; }
+.appear-label { font-size: 13px; color: var(--kb-ink-3); }
+.appear-comment { font-size: 13px; color: var(--kb-ink-2); margin: 4px 0; }
+.appear-good { font-size: 12px; color: #00b96b; margin: 2px 0; }
+.appear-improve { font-size: 12px; color: #e6a23c; margin: 2px 0; }
+
+/* 报告页着装回顾 */
+.iv-appear-recap {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 0; font-size: 13px; color: var(--kb-ink-2);
+}
+.appear-num-sm { font-weight: 700; color: #00b96b; font-size: 16px; }
 
 /* ===== chat ===== */
 .iv-chat { flex: 1; display: flex; flex-direction: column; max-width: 800px; width: 100%; margin: 0 auto; }
-/* 顶栏容器化：白底 + 底边 + 细影 */
 .iv-top {
   display: flex; align-items: center; gap: 12px; padding: 12px 16px;
   background: #fff; border-bottom: 1px solid var(--kb-line);
@@ -577,7 +807,6 @@ async function openDetail(id) {
 .msg { display: flex; margin-bottom: 12px; align-items: flex-start; gap: 8px; }
 .msg.ai { justify-content: flex-start; }
 .msg.me { justify-content: flex-end; }
-/* AI消息头像：品牌渐变小圆徽 */
 .msg-avatar {
   width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
   background: var(--kb-brand-grad); color: #fff;
@@ -592,13 +821,11 @@ async function openDetail(id) {
 .msg.ai .bubble { background: #fff; border: 1px solid var(--kb-line); }
 .msg.me .bubble { background: var(--kb-brand-grad); color: #fff; box-shadow: 0 2px 8px rgba(0, 185, 107, .25); }
 .bubble.thinking { color: var(--kb-ink-3); }
-/* 流式打字光标：点评/总评逐字上屏时尾部闪烁，提示“还在说” */
-.bubble.streaming::after, .iv-sub.streaming::after {
+.bubble.streaming::after {
   content: ''; display: inline-block; width: 2px; height: 1em;
   margin-left: 2px; vertical-align: -2px; background: currentColor;
   animation: iv-cursor 0.9s steps(2) infinite;
 }
-@keyframes iv-cursor { 50% { opacity: 0; } }
 .bubble.selfeval { background: #fdf6ec; border-color: #f3d9ab; }
 .bubble .ref { margin: 8px 0; color: var(--kb-ink-2); font-size: 13px; }
 .fb-actions { display: flex; gap: 10px; }
@@ -611,7 +838,7 @@ async function openDetail(id) {
 }
 .iv-foot .el-button { flex-shrink: 0; }
 
-/* ===== 面对面视频通话区 ===== */
+/* ===== 视频通话区 ===== */
 .iv-stage { padding: 0 16px; }
 .iv-video {
   position: relative; height: clamp(220px, 38vh, 330px);
@@ -620,13 +847,10 @@ async function openDetail(id) {
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.10);
   transition: box-shadow 0.3s;
 }
-/* 听写时红圈提示：面试官在听你说话 */
 .iv-video.listening { box-shadow: 0 0 0 3px rgba(245, 108, 108, 0.5), 0 4px 18px rgba(0, 0, 0, 0.10); }
-
-/* --- 面试官形象：写实照片，图内自带虚化办公室背景 --- */
 .iv-figure {
   position: absolute; inset: 0; z-index: 0;
-  animation: iv-breathe 5s ease-in-out infinite;        /* 呼吸起伏 */
+  animation: iv-breathe 5s ease-in-out infinite;
   transition: rotate 0.9s cubic-bezier(0.37, 0, 0.63, 1), filter 0.6s;
   will-change: transform;
 }
@@ -634,22 +858,13 @@ async function openDetail(id) {
   width: 100%; height: 100%; object-fit: cover; object-position: center top;
   user-select: none; display: block;
 }
-/* 图片加载失败时的SVG兜底形象 */
-.iv-fallback {
-  position: absolute; left: 50%; bottom: -6%; transform: translateX(-50%);
-  height: 112%; width: auto;
-}
+.iv-fallback { position: absolute; left: 50%; bottom: -6%; transform: translateX(-50%); height: 112%; width: auto; }
 @keyframes iv-breathe { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
-/* 聆听你作答：轻轻点头（叠加在呼吸动画的位移上） */
 .iv-video.listening .iv-figure { animation: iv-breathe 5s ease-in-out infinite, iv-nod 1.15s ease-in-out infinite; }
 @keyframes iv-nod { 0%, 100% { rotate: 0deg; } 40% { rotate: 1.4deg; } 70% { rotate: -0.7deg; } }
-/* 思考中：头微侧+画面轻压暗，像在斟酌措辞 */
 .iv-video.thinking .iv-figure { rotate: 1.5deg; filter: saturate(0.85) brightness(0.96); }
-/* 讲话中：极轻微缩放，配合字幕营造"在开口"的节奏感 */
 .iv-video.speaking .iv-figure img { animation: iv-talk 1s ease-in-out infinite; }
 @keyframes iv-talk { 0%, 100% { scale: 1; } 50% { scale: 1.012; } }
-
-/* 电影质感：胶片噪点 */
 .iv-grain {
   position: absolute; inset: -50%; z-index: 1; pointer-events: none; opacity: 0.5;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.04 0'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)'/%3E%3C/svg%3E");
@@ -658,16 +873,12 @@ async function openDetail(id) {
 @keyframes grain {
   0% { transform: translate(0, 0); } 25% { transform: translate(-2%, 3%); }
   50% { transform: translate(3%, -2%); } 75% { transform: translate(-3%, -3%); }
-  100% { transform: translate(2%, 2%); }
+  100% { transform: translate(2%, 2); }
 }
-/* 电影质感：四周暗角，聚焦人物 */
 .iv-vignette {
   position: absolute; inset: 0; z-index: 1; pointer-events: none;
   background: radial-gradient(ellipse at center, transparent 55%, rgba(10, 18, 28, 0.32) 100%);
 }
-/* 思考状态的暗化已合并到 .iv-figure 规则，无需单独覆盖 */
-
-/* --- 说话时的声波动画（字幕前） --- */
 .iv-wave { display: inline-flex; align-items: center; gap: 2px; height: 14px; margin-right: 8px; vertical-align: middle; }
 .iv-wave i { width: 3px; height: 14px; border-radius: 2px; background: #00d97e; animation: wv 0.7s ease-in-out infinite; }
 .iv-wave i:nth-child(2) { animation-delay: 0.12s; }
@@ -675,8 +886,6 @@ async function openDetail(id) {
 .iv-wave i:nth-child(4) { animation-delay: 0.36s; }
 .iv-wave i:nth-child(5) { animation-delay: 0.48s; }
 @keyframes wv { 0%, 100% { transform: scaleY(0.3); } 50% { transform: scaleY(1); } }
-
-/* --- 视频区浮层元素 --- */
 .iv-badge {
   position: absolute; left: 12px; bottom: 12px; z-index: 2;
   display: flex; align-items: center; gap: 6px;
@@ -701,7 +910,6 @@ async function openDetail(id) {
 .self-view:hover { transform: scale(1.05); }
 .self-view video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .cam-hint { font-size: 10px; color: rgba(255, 255, 255, 0.65); margin-top: 2px; font-style: normal; }
-/* 实时字幕：面试官正在说的话 */
 .iv-caption {
   position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 2;
   max-width: 58%; background: rgba(15, 23, 32, 0.72); color: #fff;
@@ -711,7 +919,7 @@ async function openDetail(id) {
 }
 .iv-caption-text { white-space: pre-wrap; }
 
-/* 面试官形象选择（setup页） */
+/* 面试官形象选择 */
 .avatar-pick { display: flex; gap: 14px; width: 100%; }
 .avatar-opt {
   flex: 1; border: 2px solid var(--kb-line); border-radius: 10px; overflow: hidden;
@@ -735,5 +943,6 @@ async function openDetail(id) {
   .cam-hint { display: none; }
   .iv-caption { max-width: 82%; font-size: 13px; bottom: 10px; }
   .iv-badge { font-size: 11px; padding: 4px 8px; }
+  .review-cards { flex-direction: column; }
 }
 </style>

@@ -7,14 +7,14 @@ services:
     image: mysql:8.0
     container_name: kb-mysql
     environment:
-      MYSQL_ROOT_PASSWORD: "2314490042"
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_general_ci
     volumes:
       - mysql-data:/var/lib/mysql
       # 首次启动自动执行建库脚本（kb-schema.sql：10张表）
       - ./mysql/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h127.0.0.1 -uroot -p2314490042 --silent"]
+      test: ["CMD-SHELL", "mysqladmin ping -h127.0.0.1 -uroot -p${MYSQL_ROOT_PASSWORD:-root} --silent"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -57,10 +57,8 @@ services:
     volumes:
       - minio-data:/data
     ports:
-      # 宿主机9100/9101被本机开发用的MinIO占着，改映射到9200/9201；
-      # API口要暴露给浏览器（附件下载签名直链用），容器间通信不受影响
-      - "9200:9000"
-      - "9201:9101"
+      - "${MINIO_API_PORT:-9100}:9000"
+      - "${MINIO_CONSOLE_PORT:-9101}:9101"
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 10s
@@ -77,9 +75,9 @@ services:
       JVM_XMX: 256m
       JVM_XMN: 128m
     ports:
-      # 宿主机8848被本机开发用的Nacos占着，控制台口映射到8849；
-      # 容器间通信走compose内网不受影响
-      - "8849:8848"
+      # Nacos 2.x 需要两个端口：8848(HTTP API/控制台) + 9848(gRPC通信)
+      - "8848:8848"
+      - "9848:9848"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8848/nacos/actuator/health || exit 1"]
       interval: 10s
@@ -95,7 +93,7 @@ services:
       # 数据源指向容器内MySQL
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/kb?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai
       SPRING_DATASOURCE_USERNAME: root
-      SPRING_DATASOURCE_PASSWORD: "2314490042"
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
       # Nacos：注册/配置都指向容器内nacos。
       # discovery.ip钉成服务名kb-service（容器DNS可解析）——覆盖yml里的127.0.0.1，
       # 否则网关按127.0.0.1转发会打到自己容器里
@@ -104,9 +102,9 @@ services:
       SPRING_CLOUD_NACOS_CONFIG_SERVER_ADDR: nacos:8848
       SPRING_DATA_REDIS_HOST: redis
       SPRING_RABBITMQ_HOST: rabbitmq
-      # MinIO：后端内网走容器名，签给浏览器的下载链接走宿主机9200口
-      MINIO_ENDPOINT: http://minio:9000
-      MINIO_PUBLIC_ENDPOINT: http://localhost:9200
+      # MinIO：后端内网走容器名，签给浏览器的下载链接走宿主机API口
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
+      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-http://localhost:9100}
       # AI大模型密钥：从同目录.env文件读取（.env已gitignore，不上传代码库）
       AI_API_KEY: ${AI_API_KEY:-}
     depends_on:
