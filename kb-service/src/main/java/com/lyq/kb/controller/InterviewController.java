@@ -3,12 +3,16 @@ package com.lyq.kb.controller;
 import com.lyq.kb.common.RateLimit;
 import com.lyq.kb.common.Result;
 import com.lyq.kb.common.Sse;
+import com.lyq.kb.dto.AppearanceEvalRequest;
+import com.lyq.kb.dto.AppearanceEvalVO;
 import com.lyq.kb.dto.InterviewEvaluateRequest;
 import com.lyq.kb.dto.InterviewEvaluateVO;
 import com.lyq.kb.dto.InterviewQuestionVO;
 import com.lyq.kb.dto.InterviewReportRequest;
 import com.lyq.kb.dto.InterviewStartRequest;
+import com.lyq.kb.dto.ResumeReviewVO;
 import com.lyq.kb.entity.Interview;
+import com.lyq.kb.entity.Resume;
 import com.lyq.kb.service.InterviewService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -25,7 +29,28 @@ public class InterviewController {
 
     private final InterviewService interviewService;
 
-    /** 抽题开考 */
+    /** 我的简历列表（面试选简历用） */
+    @GetMapping("/my-resumes")
+    public Result<List<Resume>> myResumes() {
+        return Result.ok(interviewService.myResumes());
+    }
+
+    /** 流式简历审核：delta=审核文本增量 → done=结构化结果 */
+    @RateLimit(timeWindow = 60, maxCount = 5, message = "简历审核太频繁，请稍后再试")
+    @PostMapping("/review-resume-stream")
+    public SseEmitter reviewResumeStream(@RequestParam Long resumeId) {
+        return Sse.run(emitter -> interviewService.reviewResumeStream(resumeId,
+                d -> Sse.send(emitter, "delta", d),
+                vo -> Sse.send(emitter, "done", vo)), 90_000L);
+    }
+
+    /** 着装评估 */
+    @PostMapping("/evaluate-appearance")
+    public Result<AppearanceEvalVO> evaluateAppearance(@Valid @RequestBody AppearanceEvalRequest req) {
+        return Result.ok(interviewService.evaluateAppearance(req));
+    }
+
+    /** 抽题开考（支持题库/简历两种模式） */
     @PostMapping("/start")
     public Result<List<InterviewQuestionVO>> start(@Valid @RequestBody InterviewStartRequest req) {
         return Result.ok(interviewService.start(req));

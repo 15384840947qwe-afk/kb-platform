@@ -8,6 +8,9 @@ import lombok.Data;
 @Data
 public class InterviewStartRequest {
 
+    /** 关联简历ID，有值时按简历出题 */
+    private Long resumeId;
+
     /** 科目，空=混合 */
     private String category;
 
