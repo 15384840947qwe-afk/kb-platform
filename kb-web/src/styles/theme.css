@@ -1,0 +1,162 @@
+/* ===== KB 设计系统：品牌绿 #00b96b + 企业级组件精修 ===== */
+:root {
+  --el-color-primary: #00b96b;
+  --el-color-primary-dark-2: #009456;
+  --el-color-primary-light-3: #33c789;
+  --el-color-primary-light-5: #66d4a6;
+  --el-color-primary-light-7: #99e2c3;
+  --el-color-primary-light-8: #b3ebd3;
+  --el-color-primary-light-9: #ccf5e3;
+
+  /* 中性色阶（参考飞书/语雀） */
+  --kb-ink: #1f2329;
+  --kb-ink-2: #51565d;
+  --kb-ink-3: #8f959e;
+  --kb-line: #e9ecef;
+  --kb-bg: #f5f6f7;
+  --kb-card: #ffffff;
+  --kb-side-active: #e8f7ef;
+  --kb-side-hover: #f2f3f5;
+  --kb-ico: #bec0bf;
+
+  /* 品牌渐变与阴影体系 */
+  --kb-brand-grad: linear-gradient(135deg, #00c97b 0%, #009a5b 100%);
+  --kb-radius: 12px;
+  --kb-shadow-sm: 0 1px 3px rgba(31, 35, 41, .06);
+  --kb-shadow-md: 0 4px 16px rgba(31, 35, 41, .09);
+  --kb-shadow-lg: 0 12px 36px rgba(31, 35, 41, .14);
+  --kb-trans: all .2s ease;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    Roboto, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+    'Helvetica Neue', Helvetica, Arial, sans-serif;
+  color: var(--kb-ink);
+  background: var(--kb-bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: rgba(0, 185, 107, .18);
+}
+
+/* ===== 滚动条：细而克制 ===== */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #d5d8db; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #b9bcc1; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ===== 按钮：圆角、字重、主按钮带品牌投影 ===== */
+.el-button {
+  border-radius: 8px;
+  font-weight: 500;
+  transition: var(--kb-trans);
+}
+.el-button--large { border-radius: 10px; letter-spacing: 2px; }
+.el-button--primary {
+  background: var(--kb-brand-grad);
+  border: none;
+  box-shadow: 0 2px 8px rgba(0, 185, 107, .28);
+}
+.el-button--primary:hover,
+.el-button--primary:focus {
+  background: linear-gradient(135deg, #00d381 0%, #00a562 100%);
+  box-shadow: 0 4px 12px rgba(0, 185, 107, .36);
+}
+.el-button--primary.is-disabled,
+.el-button--primary.is-disabled:hover {
+  background: var(--el-color-primary-light-5);
+  box-shadow: none;
+}
+.el-button--default:not(.is-disabled):hover {
+  border-color: var(--el-color-primary-light-5);
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+
+/* ===== 输入框：圆角、柔和聚焦环 ===== */
+.el-input__wrapper,
+.el-textarea__inner {
+  border-radius: 8px;
+  transition: box-shadow .2s ease;
+}
+.el-input__wrapper.is-focus,
+.el-textarea__inner:focus {
+  box-shadow: 0 0 0 1px var(--el-color-primary) inset, 0 0 0 3px rgba(0, 185, 107, .12) !important;
+}
+.el-select .el-input__wrapper { border-radius: 8px; }
+
+/* ===== 弹窗/抽屉/消息：大圆角 + 层级阴影 ===== */
+.el-dialog {
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: var(--kb-shadow-lg);
+}
+.el-dialog__header {
+  padding: 18px 22px 14px;
+  margin-right: 0;
+  border-bottom: 1px solid var(--kb-line);
+}
+.el-dialog__title { font-weight: 600; font-size: 16px; }
+.el-dialog__body { padding: 20px 22px; }
+.el-dialog__footer { padding: 14px 22px 18px; }
+
+.el-drawer { box-shadow: var(--kb-shadow-lg); }
+.el-drawer__header {
+  margin-bottom: 0;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--kb-line);
+  font-weight: 600;
+  color: var(--kb-ink);
+}
+.el-drawer__body { padding: 14px 16px; }
+
+.el-message { border-radius: 10px; box-shadow: var(--kb-shadow-md); border: none; }
+.el-message-box { border-radius: 14px; box-shadow: var(--kb-shadow-lg); }
+.el-popper.is-light { border-radius: 8px; }
+
+/* ===== 标签页：加粗当前项、圆角指示条 ===== */
+.el-tabs__item { font-weight: 500; transition: var(--kb-trans); }
+.el-tabs__active-bar { border-radius: 2px; height: 3px; }
+
+/* ===== 标签/进度/卡片/表格 圆角统一 ===== */
+.el-tag { border-radius: 6px; }
+.el-progress-bar__outer { border-radius: 6px; }
+.el-progress-bar__inner { border-radius: 6px; background: var(--kb-brand-grad); }
+.el-card { border-radius: var(--kb-radius); border-color: var(--kb-line); box-shadow: var(--kb-shadow-sm); }
+.el-table { --el-table-border-color: var(--kb-line); }
+.el-table th.el-table__cell { background: #fafbfc; color: var(--kb-ink-2); font-weight: 600; }
+.el-checkbox__inner { border-radius: 5px; }
+.el-upload-dragger { border-radius: var(--kb-radius); }
+
+/* ===== 目录树：悬停浅灰、当前项品牌浅绿（语雀式） ===== */
+.el-tree {
+  background: transparent;
+  --el-tree-node-hover-bg-color: transparent;
+}
+.el-tree-node__content { border-radius: 6px; }
+.el-tree-node__content:hover { background: var(--kb-side-hover); }
+.el-tree--highlight-current .el-tree-node.is-current > .el-tree-node__content {
+  background: var(--kb-side-active);
+  color: var(--el-color-primary-dark-2);
+  font-weight: 500;
+}
+
+/* ===== 通用卡片工具类 ===== */
+.kb-card {
+  background: var(--kb-card);
+  border: 1px solid var(--kb-line);
+  border-radius: var(--kb-radius);
+  box-shadow: var(--kb-shadow-sm);
+}
+
+/* 抽屉（历史/审核/我的提交）在手机上收窄到85%；
+   el-drawer传送挂在body上，组件scoped样式够不着，放全局 */
+@media (max-width: 768px) {
+  .el-drawer {
+    width: 85% !important;
+  }
+}

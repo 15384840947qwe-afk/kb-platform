@@ -1,0 +1,8 @@
+# 环境变量（含真实API密钥，不上传）
+.env
+
+# bcrypt哈希生成工具的编译产物
+gen/*.class
+
+# MinIO导出数据（736MB，通过网盘分享）
+minio-export/kb-files/

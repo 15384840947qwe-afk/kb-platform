@@ -1,0 +1,28 @@
+# 开发模式端口覆盖：只起中间件，端口全部暴露给宿主机，
+# 配合本地跑 kb-service / kb-web 调试用（详见 LOCAL-DEV.md）。
+# 用法：docker compose -f docker-compose.yml -f compose-dev.yml up -d mysql redis rabbitmq minio nacos
+services:
+  mysql:
+    ports:
+      - "3306:3306"
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  rabbitmq:
+    ports:
+      # 5672 AMQP 给后端用；15672 管理控制台浏览器看队列
+      - "5672:5672"
+      - "15672:15672"
+
+  minio:
+    ports:
+      # 覆盖主文件的 9200/9201：本地开发要还原成 application.yml 里写死的 9100/9101
+      - "9100:9000"
+      - "9101:9101"
+
+  nacos:
+    ports:
+      # 本地后端连 localhost:8848 注册，必须还原成 8848
+      - "8848:8848"
